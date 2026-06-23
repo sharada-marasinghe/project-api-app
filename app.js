@@ -1421,3 +1421,1691 @@ loadParkingSlots = async function() {
     renderParkingGrid();
   } catch (err) { g.innerHTML = `<div class="col-12"><div class="alert alert-danger">${err.message}</div></div>`; }
 };
+
+/* ══════════════════════════════════════════════════════════════
+   ADMIN VIEW IMPLEMENTATION – 14 ADMIN PANELS & ACTIONS
+══════════════════════════════════════════════════════════════ */
+
+// Patch switchApp to support Admin Mode routing
+const _origSwitchApp = switchApp;
+switchApp = function(app) {
+  state.currentApp = app;
+  document.querySelectorAll('.nav-link-custom').forEach(b=>b.classList.toggle('active',b.dataset.app===app));
+  updateTopbar(app);
+  const c = document.getElementById('app-content');
+  c.innerHTML = spinner();
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebar-overlay').classList.remove('active');
+  
+  if (app === 'home') {
+    renderHome(c);
+    return;
+  }
+  
+  if (state.adminMode) {
+    const adminFnName = 'render' + app.charAt(0).toUpperCase() + app.slice(1) + 'Admin';
+    if (typeof window[adminFnName] === 'function') {
+      window[adminFnName](c);
+      return;
+    }
+  }
+  
+  const routes={home:renderHome,bankloan:renderBankLoan,busbooking:renderBusBooking,
+    collegeproject:renderCollegeProject,ecommerce:renderEcommerce,employeeapp:renderEmployeeApp,
+    employeeonboarding:renderEmployeeOnboarding,enquiry:renderEnquiry,feestracking:renderFeesTracking,
+    goaltracker:renderGoalTracker,leavetracker:renderLeaveTracker,projectcompetition:renderProjectCompetition,
+    smartparking:renderSmartParking,survey:renderSurvey,userapp:renderUserApp};
+  if (routes[app]) routes[app](c); else c.innerHTML='<p class="text-muted">Not found.</p>';
+};
+
+// 1. BANK LOAN ADMIN
+async function renderBankloanAdmin(c){
+  c.innerHTML=`
+  <div class="section-heading"><i class="bi bi-bank me-2" style="color:var(--accent)"></i>Bank Loan Applications (Admin)</div>
+  <div class="section-sub">Administrative review and clean up of applications</div>
+  <div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <strong class="small"><i class="bi bi-shield-lock me-2"></i>Delete / Review Applications</strong>
+      <button class="btn btn-outline-primary btn-sm" onclick="loadBankLoanAdminList()"><i class="bi bi-arrow-clockwise"></i></button>
+    </div>
+    <div class="card-body p-0">
+      <div id="bla-msg" class="p-3 d-none"></div>
+      <div class="table-responsive">
+        <table class="table table-borderless mb-0">
+          <thead><tr><th>ID</th><th>Applicant</th><th>Phone / PAN</th><th>Salary</th><th>Credit</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody id="bla-tbody"><tr><td colspan="7" class="text-center py-4">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>`;
+  loadBankLoanAdminList();
+}
+async function loadBankLoanAdminList(){
+  const tb=document.getElementById('bla-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="7" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('BankLoan/GetAllApplications');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="7" class="text-center text-muted py-3">No applications found.</td></tr>`;return;}
+    tb.innerHTML=items.map((r,i)=>{
+      const st=r.applicationStatus||'Pending';
+      const sc={Approved:'var(--success-custom)',Rejected:'var(--danger-custom)'}[st]||'var(--warning-custom)';
+      const id=r.applicantID||r.id||r._id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong class="small">${r.fullName||'—'}</strong><br><small class="text-muted">${r.email||''}</small></td>
+        <td class="small text-muted">${r.customerPhone||'—'}<br>${r.panCard||'—'}</td>
+        <td class="small">₹${Number(r.annualIncome||0).toLocaleString()}</td>
+        <td><span class="badge bg-secondary">${r.creditScore||'—'}</span></td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+        <td><button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteBankLoanApp(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="7" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function deleteBankLoanApp(id){
+  const m=document.getElementById('bla-msg'); if(!m)return;
+  if(!confirm('Are you sure you want to delete this application?'))return;
+  m.className='p-3'; m.innerHTML=spinner();
+  try{
+    await api(`BankLoan/DeleteUserByUserId?userId=${id}`,'DELETE');
+    m.innerHTML=alertBox('Application deleted successfully!'); loadBankLoanAdminList();
+  }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+}
+
+// 2. BUS BOOKING ADMIN
+async function renderBusbookingAdmin(c){
+  c.innerHTML=`
+  <div class="section-heading"><i class="bi bi-bus-front me-2" style="color:var(--success-custom)"></i>Bus Schedule & Vendor Admin</div>
+  <div class="section-sub">Add schedules, manage bus operators, and review logs</div>
+  <div id="bba-msg"></div>
+  <div class="row g-4">
+    <div class="col-lg-4">
+      <div class="card mb-4">
+        <div class="card-header"><strong class="small"><i class="bi bi-plus-circle me-2"></i>Add Vendor</strong></div>
+        <div class="card-body">
+          <form id="bb-vendor-form">
+            <div class="mb-2"><label class="form-label">Vendor Name</label><input class="form-control form-control-sm" id="bb-vn" required placeholder="Intercity Travels"/></div>
+            <div class="mb-2"><label class="form-label">Phone</label><input class="form-control form-control-sm" id="bb-vp" required placeholder="9876543210"/></div>
+            <div class="mb-3"><label class="form-label">Email</label><input type="email" class="form-control form-control-sm" id="bb-ve" required placeholder="vendor@travels.com"/></div>
+            <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-check-circle me-1"></i>Save Vendor</button>
+          </form>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><strong class="small"><i class="bi bi-calendar-plus me-2"></i>Add Bus Schedule</strong></div>
+        <div class="card-body">
+          <form id="bb-sched-form">
+            <div class="mb-2"><label class="form-label">Bus Name</label><input class="form-control form-control-sm" id="bb-sname" required placeholder="Express Volvo AC"/></div>
+            <div class="mb-2"><label class="form-label">Vehicle No</label><input class="form-control form-control-sm" id="bb-sno" required placeholder="KA51F1234"/></div>
+            <div class="row g-2 mb-2">
+              <div class="col-6"><label class="form-label">From</label><input class="form-control form-control-sm" id="bb-sfrom" required placeholder="Bangalore"/></div>
+              <div class="col-6"><label class="form-label">To</label><input class="form-control form-control-sm" id="bb-sto" required placeholder="Mumbai"/></div>
+            </div>
+            <div class="row g-2 mb-2">
+              <div class="col-6"><label class="form-label">Departure</label><input type="datetime-local" class="form-control form-control-sm" id="bb-sdep" required/></div>
+              <div class="col-6"><label class="form-label">Arrival</label><input type="datetime-local" class="form-control form-control-sm" id="bb-sarr" required/></div>
+            </div>
+            <div class="row g-2 mb-3">
+              <div class="col-4"><label class="form-label">Price (₹)</label><input type="number" class="form-control form-control-sm" id="bb-sprc" required placeholder="1200"/></div>
+              <div class="col-4"><label class="form-label">Seats</label><input type="number" class="form-control form-control-sm" id="bb-sseat" required value="40"/></div>
+              <div class="col-4"><label class="form-label">Vendor ID</label><input type="number" class="form-control form-control-sm" id="bb-svid" required value="1"/></div>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-calendar-check me-1"></i>Publish Schedule</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-8">
+      <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong class="small"><i class="bi bi-table me-2"></i>Active Schedules</strong>
+          <button class="btn btn-outline-primary btn-sm" onclick="loadBusSchedulesAdmin()"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+        <div class="card-body p-0"><div class="table-responsive">
+          <table class="table table-borderless mb-0">
+            <thead><tr><th>Bus</th><th>Route</th><th>Dep/Arr</th><th>Price</th><th>Seats</th><th>Action</th></tr></thead>
+            <tbody id="bba-sched-tbody"><tr><td colspan="6" class="text-center py-4">Loading…</td></tr></tbody>
+          </table>
+        </div></div>
+      </div>
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong class="small"><i class="bi bi-people me-2"></i>Registered Vendors</strong>
+          <button class="btn btn-outline-primary btn-sm" onclick="loadBusVendorsAdmin()"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+        <div class="card-body p-0"><div class="table-responsive">
+          <table class="table table-borderless mb-0">
+            <thead><tr><th>ID</th><th>Vendor Name</th><th>Contact Info</th><th>Action</th></tr></thead>
+            <tbody id="bba-vendor-tbody"><tr><td colspan="4" class="text-center py-4">Loading…</td></tr></tbody>
+          </table>
+        </div></div>
+      </div>
+    </div>
+  </div>`;
+  loadBusSchedulesAdmin();
+  loadBusVendorsAdmin();
+
+  document.getElementById('bb-vendor-form').addEventListener('submit',async e=>{
+    e.preventDefault(); const m=document.getElementById('bba-msg');
+    try{
+      await api('BusBooking/PostBusVendors','POST',{
+        vendorName:document.getElementById('bb-vn').value,
+        contactNo:document.getElementById('bb-vp').value,
+        emailId:document.getElementById('bb-ve').value
+      });
+      m.innerHTML=alertBox('Vendor registered!'); document.getElementById('bb-vendor-form').reset(); loadBusVendorsAdmin();
+    }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+  });
+
+  document.getElementById('bb-sched-form').addEventListener('submit',async e=>{
+    e.preventDefault(); const m=document.getElementById('bba-msg');
+    try{
+      await api('BusBooking/PostBusSchedule','POST',{
+        busName:document.getElementById('bb-sname').value,
+        busVehicleNo:document.getElementById('bb-sno').value,
+        fromLocation:document.getElementById('bb-sfrom').value,
+        toLocation:document.getElementById('bb-sto').value,
+        departureTime:new Date(document.getElementById('bb-sdep').value).toISOString(),
+        arrivalTime:new Date(document.getElementById('bb-sarr').value).toISOString(),
+        scheduleDate:new Date(document.getElementById('bb-sdep').value).toISOString(),
+        price:parseFloat(document.getElementById('bb-sprc').value)||0,
+        totalSeats:parseInt(document.getElementById('bb-sseat').value)||40,
+        vendorId:parseInt(document.getElementById('bb-svid').value)||1
+      });
+      m.innerHTML=alertBox('Schedule published!'); document.getElementById('bb-sched-form').reset(); loadBusSchedulesAdmin();
+    }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+  });
+}
+async function loadBusSchedulesAdmin(){
+  const tb=document.getElementById('bba-sched-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="6" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('BusBooking/GetBusSchedules');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="6" class="text-center text-muted py-3">No active schedules.</td></tr>`;return;}
+    tb.innerHTML=items.map(b=>{
+      const id=b.scheduleId||b.scheduleID||0;
+      return `<tr>
+        <td><strong>${b.busName||'—'}</strong><br><small class="text-muted">${b.busVehicleNo||''}</small></td>
+        <td class="small">${b.fromLocationName||b.fromLocation||'Origin'} → ${b.toLocationName||b.toLocation||'Dest'}</td>
+        <td class="small text-muted">${b.departureTime?new Date(b.departureTime).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'—'}<br>${b.arrivalTime?new Date(b.arrivalTime).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'—'}</td>
+        <td class="small fw-semibold">₹${b.price||0}</td>
+        <td class="small">${b.availableSeats??b.totalSeats??40}</td>
+        <td><button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteBusSchedule(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="6" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function loadBusVendorsAdmin(){
+  const tb=document.getElementById('bba-vendor-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="4" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('BusBooking/GetBusVendors');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="4" class="text-center text-muted py-3">No registered vendors.</td></tr>`;return;}
+    tb.innerHTML=items.map(v=>{
+      const id=v.vendorId||v.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${v.vendorName||'—'}</strong></td>
+        <td class="small text-muted">${v.emailId||''}<br>${v.contactNo||''}</td>
+        <td><button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteBusVendor(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="4" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function deleteBusSchedule(id){
+  if(!confirm('Are you sure you want to delete this schedule?'))return;
+  try{await api(`BusBooking/DeleteBusSchedule?id=${id}`,'DELETE'); loadBusSchedulesAdmin();}
+  catch(err){alert('Failed: '+err.message);}
+}
+async function deleteBusVendor(id){
+  if(!confirm('Are you sure you want to delete this vendor?'))return;
+  try{await api(`BusBooking/DeleteBusVendors?id=${id}`,'DELETE'); loadBusVendorsAdmin();}
+  catch(err){alert('Failed: '+err.message);}
+}
+
+// 3. COLLEGE PROJECT ADMIN
+async function renderCollegeprojectAdmin(c){
+  c.innerHTML=`
+  <div class="section-heading"><i class="bi bi-mortarboard me-2" style="color:#bc8cff"></i>College Project Submissions (Admin)</div>
+  <div class="section-sub">Approve, reject, or delete submitted student projects</div>
+  <div id="cpa-msg"></div>
+  <div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <strong class="small"><i class="bi bi-trophy me-2"></i>Student Projects</strong>
+      <button class="btn btn-outline-primary btn-sm" onclick="loadCollegeProjectAdminList()"><i class="bi bi-arrow-clockwise"></i></button>
+    </div>
+    <div class="card-body p-0"><div class="table-responsive">
+      <table class="table table-borderless mb-0">
+        <thead><tr><th>ID</th><th>Project Title</th><th>GitHub</th><th>Comp ID / User ID</th><th>Status</th><th>Review Actions</th></tr></thead>
+        <tbody id="cpa-tbody"><tr><td colspan="6" class="text-center py-4">Loading…</td></tr></tbody>
+      </table>
+    </div></div>
+  </div>`;
+  loadCollegeProjectAdminList();
+}
+async function loadCollegeProjectAdminList(){
+  const tb=document.getElementById('cpa-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="6" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('CollegeProject/getAllProjects');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="6" class="text-center text-muted py-3">No submissions.</td></tr>`;return;}
+    tb.innerHTML=items.map(p=>{
+      const id=p.projectId||p.id||0;
+      const st=p.status||'Pending';
+      const sc={Approved:'var(--success-custom)',Rejected:'var(--danger-custom)'}[st]||'var(--warning-custom)';
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${p.projectTitle||'—'}</strong><br><small class="text-muted">${(p.description||'').substring(0,50)}</small></td>
+        <td class="small">${p.githubLink?`<a href="${p.githubLink}" target="_blank" class="text-accent">Link</a>`:'—'}</td>
+        <td class="small text-muted">Comp: ${p.competitionId||'—'} \| User: ${p.userId||'—'}</td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+        <td>
+          <div class="btn-group">
+            <button class="btn btn-success btn-sm py-1 px-2" onclick="reviewCollegeProject(${id}, 'Approved')" title="Approve"><i class="bi bi-check-lg"></i></button>
+            <button class="btn btn-warning btn-sm py-1 px-2 text-dark" onclick="reviewCollegeProject(${id}, 'Rejected')" title="Reject"><i class="bi bi-x-lg"></i></button>
+            <button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteCollegeProject(${id})" title="Delete"><i class="bi bi-trash"></i></button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="6" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function reviewCollegeProject(id, status){
+  const m=document.getElementById('cpa-msg'); if(!m)return;
+  try{
+    await api('CollegeProject/changeProjectStatus','POST',{projectId:id,status});
+    m.innerHTML=alertBox(`Project marked as ${status}!`); loadCollegeProjectAdminList();
+  }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+}
+async function deleteCollegeProject(id){
+  if(!confirm('Are you sure you want to delete this project?'))return;
+  const m=document.getElementById('cpa-msg'); if(!m)return;
+  try{
+    await api(`CollegeProject/${id}`,'DELETE');
+    m.innerHTML=alertBox('Project deleted successfully!'); loadCollegeProjectAdminList();
+  }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+}
+
+// 4. ECOMMERCE ADMIN
+async function renderEcommerceAdmin(c){
+  c.innerHTML=`
+  <div class="section-heading"><i class="bi bi-cart3 me-2" style="color:var(--warning-custom)"></i>Ecommerce Store (Admin)</div>
+  <div class="section-sub">Manage categories, create products, and monitor customer orders</div>
+  <div id="eca-msg"></div>
+  <div class="row g-4">
+    <div class="col-lg-4">
+      <div class="card mb-4">
+        <div class="card-header"><strong class="small"><i class="bi bi-tag me-2"></i>Create Category</strong></div>
+        <div class="card-body">
+          <form id="ec-cat-form">
+            <div class="mb-3"><label class="form-label">Category Name</label><input class="form-control form-control-sm" id="ec-catname" required placeholder="Electronics"/></div>
+            <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-check-circle me-1"></i>Save Category</button>
+          </form>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><strong class="small"><i class="bi bi-plus-circle me-2"></i>Add Product</strong></div>
+        <div class="card-body">
+          <form id="ec-prod-form">
+            <div class="mb-2"><label class="form-label">Product Name</label><input class="form-control form-control-sm" id="ec-pname" required placeholder="Wireless Headset"/></div>
+            <div class="mb-2"><label class="form-label">Price (₹)</label><input type="number" class="form-control form-control-sm" id="ec-pprice" required placeholder="2499"/></div>
+            <div class="mb-2"><label class="form-label">Product SKU</label><input class="form-control form-control-sm" id="ec-psku" required placeholder="SKU-HEADSET"/></div>
+            <div class="mb-2"><label class="form-label">Category ID</label><input type="number" class="form-control form-control-sm" id="ec-pcatid" required value="1"/></div>
+            <div class="mb-3"><label class="form-label">Description</label><textarea class="form-control form-control-sm" id="ec-pdesc" rows="2" placeholder="Bluetooth 5.0 headphones…"></textarea></div>
+            <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-cloud-upload me-1"></i>Publish Product</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-8">
+      <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong class="small"><i class="bi bi-bag-check me-2"></i>Customer Orders</strong>
+          <button class="btn btn-outline-primary btn-sm" onclick="loadEcommerceOrders()"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+        <div class="card-body p-0"><div class="table-responsive">
+          <table class="table table-borderless mb-0">
+            <thead><tr><th>Order ID</th><th>Customer</th><th>Product</th><th>Date</th><th>Status</th><th>Action</th></tr></thead>
+            <tbody id="eca-orders-tbody"><tr><td colspan="6" class="text-center py-4">Loading…</td></tr></tbody>
+          </table>
+        </div></div>
+      </div>
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong class="small"><i class="bi bi-trash me-2"></i>Product Listing (Delete)</strong>
+          <button class="btn btn-outline-primary btn-sm" onclick="loadEcommerceProductsAdmin()"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+        <div class="card-body p-0"><div class="table-responsive">
+          <table class="table table-borderless mb-0">
+            <thead><tr><th>SKU</th><th>Product Name</th><th>Price</th><th>Category</th><th>Action</th></tr></thead>
+            <tbody id="eca-prod-tbody"><tr><td colspan="5" class="text-center py-4">Loading…</td></tr></tbody>
+          </table>
+        </div></div>
+      </div>
+    </div>
+  </div>`;
+  loadEcommerceOrders();
+  loadEcommerceProductsAdmin();
+
+  document.getElementById('ec-cat-form').addEventListener('submit',async e=>{
+    e.preventDefault(); const m=document.getElementById('eca-msg');
+    try{
+      await api('Ecommerce/CreateParentCategory','POST',{parentCategoryName:document.getElementById('ec-catname').value});
+      m.innerHTML=alertBox('Parent category saved!'); document.getElementById('ec-cat-form').reset();
+    }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+  });
+
+  document.getElementById('ec-prod-form').addEventListener('submit',async e=>{
+    e.preventDefault(); const m=document.getElementById('eca-msg');
+    try{
+      await api('Ecommerce/create-product','POST',{
+        productName:document.getElementById('ec-pname').value,
+        price:parseFloat(document.getElementById('ec-pprice').value)||0,
+        productSku:document.getElementById('ec-psku').value,
+        categoryId:parseInt(document.getElementById('ec-pcatid').value)||1,
+        productDescription:document.getElementById('ec-pdesc').value,
+        deliveryTimeInDays:3
+      });
+      m.innerHTML=alertBox('Product published!'); document.getElementById('ec-prod-form').reset(); loadEcommerceProductsAdmin();
+    }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+  });
+}
+async function loadEcommerceOrders(){
+  const tb=document.getElementById('eca-orders-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="6" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('Ecommerce/get-orders');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="6" class="text-center text-muted py-3">No orders placed.</td></tr>`;return;}
+    tb.innerHTML=items.map(o=>{
+      const id=o.orderId||o.id||0;
+      const st=o.orderStatus||'Pending';
+      const sc=st==='Completed'?'var(--success-custom)':st==='Cancelled'?'var(--danger-custom)':'var(--warning-custom)';
+      return `<tr>
+        <td><span class="badge bg-secondary">#ORD${id}</span></td>
+        <td class="small">${o.customerName||'Customer #'+(o.customerId||1)}</td>
+        <td class="small fw-semibold">${o.productName||'Product'}</td>
+        <td class="small text-muted">${o.orderDate?new Date(o.orderDate).toLocaleDateString():'—'}</td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+        <td>
+          <div class="btn-group">
+            <button class="btn btn-success btn-sm py-1 px-2" onclick="updateOrderStatus(${id}, 'Completed')" title="Mark Completed"><i class="bi bi-check-lg"></i></button>
+            <button class="btn btn-danger btn-sm py-1 px-2" onclick="cancelOrder(${id})" title="Cancel Order"><i class="bi bi-x-lg"></i></button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="6" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function loadEcommerceProductsAdmin(){
+  const tb=document.getElementById('eca-prod-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="5" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('Ecommerce/get-products');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="5" class="text-center text-muted py-3">No products available.</td></tr>`;return;}
+    tb.innerHTML=items.map(p=>{
+      const id=p.productId||p.id||0;
+      return `<tr>
+        <td class="small text-muted">${p.productSku||'—'}</td>
+        <td><strong>${p.productName||'—'}</strong></td>
+        <td class="small fw-semibold">₹${p.price||0}</td>
+        <td class="small"><span class="badge bg-secondary">${p.parentCategoryName||'General'}</span></td>
+        <td><button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteEcommerceProduct(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function updateOrderStatus(orderId, status){
+  try{
+    await api(`Ecommerce/update-order/${orderId}`,'PUT',{orderStatus:status});
+    loadEcommerceOrders();
+  }catch(err){alert('Failed: '+err.message);}
+}
+async function cancelOrder(orderId){
+  if(!confirm('Are you sure you want to cancel this order?'))return;
+  try{
+    await api(`Ecommerce/cancel-order/${orderId}`,'DELETE');
+    loadEcommerceOrders();
+  }catch(err){alert('Failed: '+err.message);}
+}
+async function deleteEcommerceProduct(id){
+  if(!confirm('Are you sure you want to delete this product?'))return;
+  try{
+    await api(`Ecommerce/delete-product/${id}`,'DELETE');
+    loadEcommerceProductsAdmin();
+  }catch(err){alert('Failed: '+err.message);}
+}
+
+// 5. EMPLOYEE APP ADMIN
+async function renderEmployeeappAdmin(c){
+  c.innerHTML=`
+  <div class="section-heading"><i class="bi bi-people me-2" style="color:var(--accent)"></i>Employee App (Admin)</div>
+  <div class="section-sub">Add or remove company employees and structure departments</div>
+  <div id="ema-msg"></div>
+  <div class="row g-4">
+    <div class="col-lg-4">
+      <div class="card">
+        <div class="card-header"><strong class="small"><i class="bi bi-person-plus me-2"></i>Create Employee</strong></div>
+        <div class="card-body">
+          <form id="em-add-form">
+            <div class="mb-2"><label class="form-label">Employee Name</label><input class="form-control form-control-sm" id="em-name" required placeholder="Robert Smith"/></div>
+            <div class="mb-2"><label class="form-label">Email</label><input type="email" class="form-control form-control-sm" id="em-email" required placeholder="robert@company.com"/></div>
+            <div class="mb-2"><label class="form-label">Phone</label><input class="form-control form-control-sm" id="em-phone" required placeholder="9876543210"/></div>
+            <div class="mb-2"><label class="form-label">Department ID</label><input type="number" class="form-control form-control-sm" id="em-deptid" required value="1"/></div>
+            <div class="mb-3"><label class="form-label">Designation ID</label><input type="number" class="form-control form-control-sm" id="em-desgid" required value="1"/></div>
+            <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-check-circle me-1"></i>Register Employee</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-8">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong class="small"><i class="bi bi-people me-2"></i>Employee Registry</strong>
+          <button class="btn btn-outline-primary btn-sm" onclick="loadEmployeesAdmin()"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+        <div class="card-body p-0"><div class="table-responsive">
+          <table class="table table-borderless mb-0">
+            <thead><tr><th>Employee</th><th>Department</th><th>Designation</th><th>Contact</th><th>Action</th></tr></thead>
+            <tbody id="ema-tbody"><tr><td colspan="5" class="text-center py-4">Loading…</td></tr></tbody>
+          </table>
+        </div></div>
+      </div>
+    </div>
+  </div>`;
+  loadEmployeesAdmin();
+
+  document.getElementById('em-add-form').addEventListener('submit',async e=>{
+    e.preventDefault(); const m=document.getElementById('ema-msg');
+    try{
+      await api('EmployeeApp/CreateEmployee','POST',{
+        employeeName:document.getElementById('em-name').value,
+        email:document.getElementById('em-email').value,
+        phone:document.getElementById('em-phone').value,
+        deptId:parseInt(document.getElementById('em-deptid').value)||1,
+        designationId:parseInt(document.getElementById('em-desgid').value)||1,
+        gender:'Male',role:'Staff'
+      });
+      m.innerHTML=alertBox('Employee registered successfully!'); document.getElementById('em-add-form').reset(); loadEmployeesAdmin();
+    }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+  });
+}
+async function loadEmployeesAdmin(){
+  const tb=document.getElementById('ema-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="5" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('EmployeeApp/GetEmployees');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="5" class="text-center text-muted py-3">No employees listed.</td></tr>`;return;}
+    tb.innerHTML=items.map(e=>{
+      const id=e.employeeId||e.id||0;
+      return `<tr>
+        <td><strong>${e.fullName||e.employeeName||'—'}</strong><br><small class="text-muted">${e.email||''}</small></td>
+        <td><span class="badge bg-secondary bg-opacity-25 text-secondary">${e.departmentName||'Department #'+(e.deptId||'')}</span></td>
+        <td class="small">${e.designationName||'Designation #'+(e.designationId||'')}</td>
+        <td class="small text-muted">${e.phone||'—'}</td>
+        <td><button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteEmployee(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function deleteEmployee(id){
+  if(!confirm('Are you sure you want to delete this employee?'))return;
+  try{
+    await api('EmployeeApp/DeleteEmployee','DELETE',{employeeId:id});
+    loadEmployeesAdmin();
+  }catch(err){alert('Failed: '+err.message);}
+}
+
+// 6. EMPLOYEE ONBOARDING ADMIN
+async function renderEmployeeonboardingAdmin(c){
+  c.innerHTML=`
+  <div class="section-heading"><i class="bi bi-person-check me-2" style="color:var(--success-custom)"></i>Employee Onboarding Admin</div>
+  <div class="section-sub">Manage dropdown options, company logs, and onboarding profiles</div>
+  <div id="eoa-msg"></div>
+  
+  <ul class="nav nav-pills mb-3 gap-2" id="eoa-tab-list" role="tablist">
+    <li class="nav-item"><button class="btn btn-outline-primary btn-sm active" id="eoa-emp-tab" data-bs-toggle="pill" data-bs-target="#eoa-emp" type="button">Onboarded Profiles</button></li>
+    <li class="nav-item"><button class="btn btn-outline-primary btn-sm" id="eoa-mast-tab" data-bs-toggle="pill" data-bs-target="#eoa-mast" type="button">Master Dropdowns</button></li>
+    <li class="nav-item"><button class="btn btn-outline-primary btn-sm" id="eoa-comp-tab" data-bs-toggle="pill" data-bs-target="#eoa-comp" type="button">Company Logs</button></li>
+  </ul>
+  
+  <div class="tab-content" id="eoa-tabs">
+    <!-- ONBOARDED EMPLOYEES -->
+    <div class="tab-pane fade show active" id="eoa-emp">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong class="small"><i class="bi bi-person-lines-fill me-2"></i>Onboarded List</strong>
+          <button class="btn btn-outline-primary btn-sm" onclick="loadOnboardingEmployeesAdmin()"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+        <div class="card-body p-0"><div class="table-responsive">
+          <table class="table table-borderless mb-0">
+            <thead><tr><th>Employee</th><th>Onboarding Code</th><th>Role</th><th>Salary</th><th>Company</th><th>Action</th></tr></thead>
+            <tbody id="eoa-emp-tbody"><tr><td colspan="6" class="text-center py-4">Loading…</td></tr></tbody>
+          </table>
+        </div></div>
+      </div>
+    </div>
+    
+    <!-- MASTERS -->
+    <div class="tab-pane fade" id="eoa-mast">
+      <div class="row g-4">
+        <div class="col-md-5">
+          <div class="card">
+            <div class="card-header"><strong class="small"><i class="bi bi-plus-circle"></i> Add Master Entry</strong></div>
+            <div class="card-body">
+              <form id="eoa-master-form">
+                <div class="mb-2"><label class="form-label">Master For (e.g. Department, Designation)</label><input class="form-control form-control-sm" id="eoa-mfor" required placeholder="Department"/></div>
+                <div class="mb-3"><label class="form-label">Master Value</label><input class="form-control form-control-sm" id="eoa-mval" required placeholder="QA Testing"/></div>
+                <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-check-circle"></i> Save Master</button>
+              </form>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-7">
+          <div class="card">
+            <div class="card-header"><strong class="small"><i class="bi bi-table"></i> All Masters</strong></div>
+            <div class="card-body p-0"><div class="table-responsive">
+              <table class="table table-borderless mb-0">
+                <thead><tr><th>ID</th><th>Master For</th><th>Value</th><th>Action</th></tr></thead>
+                <tbody id="eoa-master-tbody"><tr><td colspan="4" class="text-center py-4">Loading…</td></tr></tbody>
+              </table>
+            </div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- COMPANIES -->
+    <div class="tab-pane fade" id="eoa-comp">
+      <div class="row g-4">
+        <div class="col-md-5">
+          <div class="card">
+            <div class="card-header"><strong class="small"><i class="bi bi-plus-circle"></i> Add Company Profile</strong></div>
+            <div class="card-body">
+              <form id="eoa-comp-form">
+                <div class="mb-2"><label class="form-label">Company Name</label><input class="form-control form-control-sm" id="eoa-cname" required placeholder="Globex Corp"/></div>
+                <div class="mb-2"><label class="form-label">Headquarters</label><input class="form-control form-control-sm" id="eoa-cloc" required placeholder="New York"/></div>
+                <div class="mb-3"><label class="form-label">Website</label><input class="form-control form-control-sm" id="eoa-cweb" required placeholder="www.globex.com"/></div>
+                <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-check-circle"></i> Save Company</button>
+              </form>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-7">
+          <div class="card">
+            <div class="card-header"><strong class="small"><i class="bi bi-building"></i> Companies</strong></div>
+            <div class="card-body p-0"><div class="table-responsive">
+              <table class="table table-borderless mb-0">
+                <thead><tr><th>ID</th><th>Company Name</th><th>Location</th><th>Website</th><th>Action</th></tr></thead>
+                <tbody id="eoa-comp-tbody"><tr><td colspan="5" class="text-center py-4">Loading…</td></tr></tbody>
+              </table>
+            </div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+
+  loadOnboardingEmployeesAdmin();
+  loadOnboardingMastersAdmin();
+  loadOnboardingCompaniesAdmin();
+
+  document.getElementById('eoa-master-form').addEventListener('submit',async e=>{
+    e.preventDefault(); const m=document.getElementById('eoa-msg');
+    try{
+      await api('EmployeeOnboarding/CreateNewMaster','POST',{
+        masterFor:document.getElementById('eoa-mfor').value,
+        masterName:document.getElementById('eoa-mval').value
+      });
+      m.innerHTML=alertBox('Master dropdown entry saved!'); document.getElementById('eoa-master-form').reset(); loadOnboardingMastersAdmin();
+    }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+  });
+
+  document.getElementById('eoa-comp-form').addEventListener('submit',async e=>{
+    e.preventDefault(); const m=document.getElementById('eoa-msg');
+    try{
+      await api('EmployeeOnboarding/PostCompany','POST',{
+        companyName:document.getElementById('eoa-cname').value,
+        location:document.getElementById('eoa-cloc').value,
+        website:document.getElementById('eoa-cweb').value
+      });
+      m.innerHTML=alertBox('Company saved!'); document.getElementById('eoa-comp-form').reset(); loadOnboardingCompaniesAdmin();
+    }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+  });
+}
+async function loadOnboardingEmployeesAdmin(){
+  const tb=document.getElementById('eoa-emp-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="6" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('EmployeeOnboarding/GetEmployees');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="6" class="text-center text-muted py-3">No onboarded employee profiles found.</td></tr>`;return;}
+    tb.innerHTML=items.map(e=>{
+      const id=e.employeeId||e.id||0;
+      return `<tr>
+        <td><strong>${(e.firstName||'') + ' ' + (e.lastName||'')}</strong><br><small class="text-muted">${e.email||''}</small></td>
+        <td class="small text-muted">${e.employeeCode||e.employeeId||'—'}</td>
+        <td class="small">${e.role||e.designation||'Staff'}</td>
+        <td class="small">₹${Number(e.salary||0).toLocaleString()}</td>
+        <td class="small text-muted">${e.company||'—'}</td>
+        <td><button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteOnboardedEmployee(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="6" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function loadOnboardingMastersAdmin(){
+  const tb=document.getElementById('eoa-master-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="4" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('EmployeeOnboarding/getAllMaster');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="4" class="text-center text-muted py-3">No master entries found.</td></tr>`;return;}
+    tb.innerHTML=items.map(m=>{
+      const id=m.id||m.masterId||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td class="small"><strong>${m.masterFor||'—'}</strong></td>
+        <td class="small">${m.masterName||'—'}</td>
+        <td><button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteOnboardingMaster(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="4" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function loadOnboardingCompaniesAdmin(){
+  const tb=document.getElementById('eoa-comp-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="5" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('EmployeeOnboarding/GetCompanies');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="5" class="text-center text-muted py-3">No companies found.</td></tr>`;return;}
+    tb.innerHTML=items.map(c=>{
+      const id=c.companyId||c.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${c.companyName||'—'}</strong></td>
+        <td class="small">${c.location||'—'}</td>
+        <td class="small text-muted">${c.website||'—'}</td>
+        <td><button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteOnboardingCompany(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function deleteOnboardedEmployee(id){
+  if(!confirm('Are you sure you want to delete this profile?'))return;
+  try{await api(`EmployeeOnboarding/${id}`,'DELETE'); loadOnboardingEmployeesAdmin();}
+  catch(err){alert('Failed: '+err.message);}
+}
+async function deleteOnboardingMaster(id){
+  if(!confirm('Are you sure you want to delete this master dropdown entry?'))return;
+  try{await api(`EmployeeOnboarding/DeleteMasterById?id=${id}`,'DELETE'); loadOnboardingMastersAdmin();}
+  catch(err){alert('Failed: '+err.message);}
+}
+async function deleteOnboardingCompany(id){
+  if(!confirm('Are you sure you want to delete this company?'))return;
+  try{await api(`EmployeeOnboarding/DeleteCompany?id=${id}`,'DELETE'); loadOnboardingCompaniesAdmin();}
+  catch(err){alert('Failed: '+err.message);}
+}
+
+// 7. ENQUIRY ADMIN
+async function renderEnquiryAdmin(c){
+  c.innerHTML=`
+  <div class="section-heading"><i class="bi bi-chat-dots me-2" style="color:var(--danger-custom)"></i>Support Tickets (Admin)</div>
+  <div class="section-sub">Manage enquiry statuses, ticket categories, and customer support rules</div>
+  <div id="enqa-msg"></div>
+  <div class="row g-4">
+    <div class="col-lg-4">
+      <div class="card mb-4">
+        <div class="card-header"><strong class="small"><i class="bi bi-tag me-2"></i>Create Ticket Category</strong></div>
+        <div class="card-body">
+          <form id="enq-cat-form">
+            <div class="mb-3"><label class="form-label">Category Name</label><input class="form-control form-control-sm" id="enq-cname" required placeholder="Technical Support"/></div>
+            <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-check-circle me-1"></i>Save Category</button>
+          </form>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><strong class="small"><i class="bi bi-tag me-2"></i>Create Ticket Status</strong></div>
+        <div class="card-body">
+          <form id="enq-stat-form">
+            <div class="mb-3"><label class="form-label">Status Value</label><input class="form-control form-control-sm" id="enq-sname" required placeholder="Under Investigation"/></div>
+            <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-check-circle me-1"></i>Save Status</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-8">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong class="small"><i class="bi bi-ticket-detailed me-2"></i>Support Inbox</strong>
+          <button class="btn btn-outline-primary btn-sm" onclick="loadEnquiriesAdmin()"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+        <div class="card-body p-0"><div class="table-responsive">
+          <table class="table table-borderless mb-0">
+            <thead><tr><th>ID</th><th>Customer</th><th>Message</th><th>Status</th><th>Review Actions</th></tr></thead>
+            <tbody id="enqa-tbody"><tr><td colspan="5" class="text-center py-4">Loading…</td></tr></tbody>
+          </table>
+        </div></div>
+      </div>
+    </div>
+  </div>`;
+  loadEnquiriesAdmin();
+
+  document.getElementById('enq-cat-form').addEventListener('submit',async e=>{
+    e.preventDefault(); const m=document.getElementById('enqa-msg');
+    try{
+      await api('Enquiry/create-category','POST',{categoryName:document.getElementById('enq-cname').value});
+      m.innerHTML=alertBox('Enquiry Category registered!'); document.getElementById('enq-cat-form').reset();
+    }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+  });
+
+  document.getElementById('enq-stat-form').addEventListener('submit',async e=>{
+    e.preventDefault(); const m=document.getElementById('enqa-msg');
+    try{
+      await api('Enquiry/create-status','POST',{statusName:document.getElementById('enq-sname').value});
+      m.innerHTML=alertBox('Enquiry Status value registered!'); document.getElementById('enq-stat-form').reset();
+    }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+  });
+}
+async function loadEnquiriesAdmin(){
+  const tb=document.getElementById('enqa-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="5" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('Enquiry/get-enquiries');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="5" class="text-center text-muted py-3">No enquiries.</td></tr>`;return;}
+    const statusColors={Open:'var(--warning-custom)','In Progress':'var(--accent)',Resolved:'var(--success-custom)',Closed:'var(--text-muted-custom)'};
+    tb.innerHTML=items.map(r=>{
+      const id=r.enquiryId||r.id||0;
+      const st=r.statusName||r.status||'Open';
+      const sc=statusColors[st]||'var(--warning-custom)';
+      return `<tr>
+        <td><span class="badge bg-secondary">#${id}</span></td>
+        <td><strong>${r.customerName||'—'}</strong><br><small class="text-muted">${r.customerEmail||''}</small></td>
+        <td class="small">${(r.message||'—').substring(0,50)}</td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+        <td>
+          <div class="btn-group">
+            <button class="btn btn-success btn-sm py-1 px-2" onclick="updateEnquiryStatus(${id}, 'Resolved')" title="Mark Resolved"><i class="bi bi-check-lg"></i></button>
+            <button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteEnquiry(${id})" title="Delete Ticket"><i class="bi bi-trash"></i></button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function updateEnquiryStatus(id, status){
+  try{
+    await api(`Enquiry/update-enquiry/${id}`,'PUT',{statusName:status,isConverted:true});
+    loadEnquiriesAdmin();
+  }catch(err){alert('Failed: '+err.message);}
+}
+async function deleteEnquiry(id){
+  if(!confirm('Are you sure you want to delete this enquiry?'))return;
+  try{
+    await api(`Enquiry/delete-enquiry/${id}`,'DELETE');
+    loadEnquiriesAdmin();
+  }catch(err){alert('Failed: '+err.message);}
+}
+
+// 8. FEES TRACKING ADMIN
+async function renderFeestrackingAdmin(c){
+  c.innerHTML=`
+  <div class="section-heading"><i class="bi bi-cash-coin me-2" style="color:var(--warning-custom)"></i>Fees Tracking (Admin)</div>
+  <div class="section-sub">Manage batch profiles, create new courses, and audit student accounts</div>
+  <div id="fta-msg"></div>
+  <div class="row g-4">
+    <div class="col-lg-4">
+      <div class="card">
+        <div class="card-header"><strong class="small"><i class="bi bi-plus-circle me-2"></i>Create Batch</strong></div>
+        <div class="card-body">
+          <form id="ft-batch-form">
+            <div class="mb-2"><label class="form-label">Batch Name</label><input class="form-control form-control-sm" id="ft-bname" required placeholder="Summer 2026 Core Tech"/></div>
+            <div class="mb-3"><label class="form-label">Course Name</label><input class="form-control form-control-sm" id="ft-cname" required placeholder="Internet Technologies"/></div>
+            <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-check-circle me-1"></i>Publish Batch</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-8">
+      <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong class="small"><i class="bi bi-table me-2"></i>Student Accounts</strong>
+          <button class="btn btn-outline-primary btn-sm" onclick="loadFeesAdmin()"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+        <div class="card-body p-0"><div class="table-responsive">
+          <table class="table table-borderless mb-0">
+            <thead><tr><th>Student</th><th>Batch</th><th>Fees Log</th><th>Outstanding</th><th>Action</th></tr></thead>
+            <tbody id="fta-tbody"><tr><td colspan="5" class="text-center py-4">Loading…</td></tr></tbody>
+          </table>
+        </div></div>
+      </div>
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong class="small"><i class="bi bi-bookmark me-2"></i>Batches Catalog</strong>
+          <button class="btn btn-outline-primary btn-sm" onclick="loadBatchesAdmin()"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+        <div class="card-body p-0"><div class="table-responsive">
+          <table class="table table-borderless mb-0">
+            <thead><tr><th>Batch ID</th><th>Batch Name</th><th>Course Name</th><th>Action</th></tr></thead>
+            <tbody id="fta-batches-tbody"><tr><td colspan="4" class="text-center py-4">Loading…</td></tr></tbody>
+          </table>
+        </div></div>
+      </div>
+    </div>
+  </div>`;
+  loadFeesAdmin();
+  loadBatchesAdmin();
+
+  document.getElementById('ft-batch-form').addEventListener('submit',async e=>{
+    e.preventDefault(); const m=document.getElementById('fta-msg');
+    try{
+      await api('FeesTracking/batches','POST',{
+        batchName:document.getElementById('ft-bname').value,
+        courseName:document.getElementById('ft-cname').value
+      });
+      m.innerHTML=alertBox('Batch saved!'); document.getElementById('ft-batch-form').reset(); loadBatchesAdmin();
+    }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+  });
+}
+async function loadFeesAdmin(){
+  const tb=document.getElementById('fta-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="5" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('FeesTracking/getAllEnrollments');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="5" class="text-center text-muted py-3">No student enrollment logs found.</td></tr>`;return;}
+    tb.innerHTML=items.map(r=>{
+      const id=r.enrollmentId||r.id||0;
+      return `<tr>
+        <td><strong>${r.studentName||'—'}</strong><br><small class="text-muted">${r.email||''}</small></td>
+        <td><span class="badge bg-secondary">${r.batchName||r.batchId||'—'}</span></td>
+        <td class="small">Total: ₹${r.totalAmount||0}<br>Paid: ₹${r.amountReceived||0}</td>
+        <td class="small fw-semibold text-danger">₹${r.pendingAmount||0}</td>
+        <td><button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteEnrollment(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function loadBatchesAdmin(){
+  const tb=document.getElementById('fta-batches-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="4" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('FeesTracking/batches');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="4" class="text-center text-muted py-3">No batches recorded.</td></tr>`;return;}
+    tb.innerHTML=items.map(b=>{
+      const id=b.batchId||b.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${b.batchName||'—'}</strong></td>
+        <td class="small">${b.courseName||'—'}</td>
+        <td><button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteBatch(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="4" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function deleteEnrollment(id){
+  if(!confirm('Are you sure you want to delete this student enrollment log?'))return;
+  try{await api(`FeesTracking/DeleteById?id=${id}`,'DELETE'); loadFeesAdmin();}
+  catch(err){alert('Failed: '+err.message);}
+}
+async function deleteBatch(id){
+  if(!confirm('Are you sure you want to delete this batch?'))return;
+  try{await api(`FeesTracking/batches/${id}`,'DELETE'); loadBatchesAdmin();}
+  catch(err){alert('Failed: '+err.message);}
+}
+
+// 9. GOAL TRACKER ADMIN
+async function renderGoaltrackerAdmin(c){
+  c.innerHTML=`
+  <div class="section-heading"><i class="bi bi-bullseye me-2" style="color:#bc8cff"></i>Goal Tracker (Admin)</div>
+  <div class="section-sub">Audit user accounts, check progress logs, and clear system notifications</div>
+  <div id="gta-msg"></div>
+  <div class="row g-4">
+    <div class="col-lg-5">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong class="small"><i class="bi bi-people me-2"></i>Active Goal Users</strong>
+          <button class="btn btn-outline-primary btn-sm" onclick="loadGoalUsersAdmin()"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+        <div class="card-body p-0"><div class="table-responsive">
+          <table class="table table-borderless mb-0">
+            <thead><tr><th>ID</th><th>Username</th><th>Action</th></tr></thead>
+            <tbody id="gta-users-tbody"><tr><td colspan="3" class="text-center py-4">Loading…</td></tr></tbody>
+          </table>
+        </div></div>
+      </div>
+    </div>
+    <div class="col-lg-7">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong class="small"><i class="bi bi-bell-slash me-2"></i>Reminders Registry</strong>
+          <button class="btn btn-outline-primary btn-sm" onclick="loadGoalRemindersAdmin()"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+        <div class="card-body p-0"><div class="table-responsive">
+          <table class="table table-borderless mb-0">
+            <thead><tr><th>Reminder Log</th><th>Created Date</th><th>Action</th></tr></thead>
+            <tbody id="gta-rem-tbody"><tr><td colspan="3" class="text-center py-4">Loading…</td></tr></tbody>
+          </table>
+        </div></div>
+      </div>
+    </div>
+  </div>`;
+  loadGoalUsersAdmin();
+  loadGoalRemindersAdmin();
+}
+async function loadGoalUsersAdmin(){
+  const tb=document.getElementById('gta-users-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="3" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('GoalTracker/getAllUsers');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="3" class="text-center text-muted py-3">No user profiles found.</td></tr>`;return;}
+    tb.innerHTML=items.map(u=>{
+      const id=u.userId||u.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>@${u.userName||u.username||'User'}</strong><br><small class="text-muted">${u.email||''}</small></td>
+        <td><button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteGoalUser(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="3" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function loadGoalRemindersAdmin(){
+  const tb=document.getElementById('gta-rem-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="3" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('GoalTracker/getReminders');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="3" class="text-center text-muted py-3">No reminders logged.</td></tr>`;return;}
+    tb.innerHTML=items.map(r=>{
+      const id=r.reminderId||r.id||0;
+      return `<tr>
+        <td><strong class="small">${r.reminderText||'Reminder notification'}</strong><br><small class="text-muted">Target Time: ${r.reminderTime||'—'}</small></td>
+        <td class="small text-muted">${r.createdDate?new Date(r.createdDate).toLocaleDateString():'—'}</td>
+        <td><button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteGoalReminder(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="3" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function deleteGoalUser(id){
+  if(!confirm('Are you sure you want to delete this user profile?'))return;
+  try{await api(`GoalTracker/deleteUserById?id=${id}`,'DELETE'); loadGoalUsersAdmin();}
+  catch(err){alert('Failed: '+err.message);}
+}
+async function deleteGoalReminder(id){
+  if(!confirm('Are you sure you want to delete this reminder?'))return;
+  try{await api(`GoalTracker/deleteReminder/${id}`,'DELETE'); loadGoalRemindersAdmin();}
+  catch(err){alert('Failed: '+err.message);}
+}
+
+// 10. LEAVE TRACKER ADMIN
+async function renderLeavetrackerAdmin(c){
+  c.innerHTML=`
+  <div class="section-heading"><i class="bi bi-calendar-x me-2" style="color:var(--accent)"></i>Leave & Attendance Setup (Admin)</div>
+  <div class="section-sub">Add staff profiles, configure leave allocations, and audit balance sheets</div>
+  <div id="lta-msg"></div>
+  <div class="row g-4">
+    <div class="col-lg-4">
+      <div class="card mb-4">
+        <div class="card-header"><strong class="small"><i class="bi bi-plus-circle me-2"></i>Add Staff Member</strong></div>
+        <div class="card-body">
+          <form id="lt-emp-form">
+            <div class="mb-2"><label class="form-label">Full Name</label><input class="form-control form-control-sm" id="lt-ename" required placeholder="Jane Doe"/></div>
+            <div class="mb-2"><label class="form-label">Email</label><input type="email" class="form-control form-control-sm" id="lt-eemail" required placeholder="jane@company.com"/></div>
+            <div class="mb-2"><label class="form-label">Phone</label><input class="form-control form-control-sm" id="lt-ephone" required placeholder="9876543210"/></div>
+            <div class="mb-3"><label class="form-label">Department</label><input class="form-control form-control-sm" id="lt-edept" required placeholder="Engineering"/></div>
+            <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-check-circle me-1"></i>Save Staff</button>
+          </form>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><strong class="small"><i class="bi bi-cash-coin me-2"></i>Allocate Leave Balance</strong></div>
+        <div class="card-body">
+          <form id="lt-bal-form">
+            <div class="mb-2"><label class="form-label">Employee ID</label><input type="number" class="form-control form-control-sm" id="lt-beid" required value="1"/></div>
+            <div class="mb-2"><label class="form-label">Leave Type ID</label><input type="number" class="form-control form-control-sm" id="lt-bltid" required value="1"/></div>
+            <div class="mb-3"><label class="form-label">Allocated Days</label><input type="number" class="form-control form-control-sm" id="lt-bdays" required value="15"/></div>
+            <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-plus-circle me-1"></i>Allocate Days</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-8">
+      <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong class="small"><i class="bi bi-table me-2"></i>Staff Directory</strong>
+          <button class="btn btn-outline-primary btn-sm" onclick="loadLeaveStaffAdmin()"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+        <div class="card-body p-0"><div class="table-responsive">
+          <table class="table table-borderless mb-0">
+            <thead><tr><th>Staff ID</th><th>Name</th><th>Department</th><th>Contact</th><th>Action</th></tr></thead>
+            <tbody id="lta-staff-tbody"><tr><td colspan="5" class="text-center py-4">Loading…</td></tr></tbody>
+          </table>
+        </div></div>
+      </div>
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong class="small"><i class="bi bi-journals me-2"></i>System Leave Balance Sheet</strong>
+          <button class="btn btn-outline-primary btn-sm" onclick="loadLeaveBalancesAdmin()"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+        <div class="card-body p-0"><div class="table-responsive">
+          <table class="table table-borderless mb-0">
+            <thead><tr><th>Record ID</th><th>Emp ID / Name</th><th>Leave Type</th><th>Total Days</th><th>Action</th></tr></thead>
+            <tbody id="lta-bal-tbody"><tr><td colspan="5" class="text-center py-4">Loading…</td></tr></tbody>
+          </table>
+        </div></div>
+      </div>
+    </div>
+  </div>`;
+  loadLeaveStaffAdmin();
+  loadLeaveBalancesAdmin();
+
+  document.getElementById('lt-emp-form').addEventListener('submit',async e=>{
+    e.preventDefault(); const m=document.getElementById('lta-msg');
+    try{
+      await api('LeaveTracker/CreateNewEmployee','POST',{
+        employeeName:document.getElementById('lt-ename').value,
+        email:document.getElementById('lt-eemail').value,
+        phone:document.getElementById('lt-ephone').value,
+        department:document.getElementById('lt-edept').value,
+        role:'Staff'
+      });
+      m.innerHTML=alertBox('Staff member saved!'); document.getElementById('lt-emp-form').reset(); loadLeaveStaffAdmin();
+    }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+  });
+
+  document.getElementById('lt-bal-form').addEventListener('submit',async e=>{
+    e.preventDefault(); const m=document.getElementById('lta-msg');
+    try{
+      await api('LeaveTracker/AddLeaveBalance','POST',{
+        employeeId:parseInt(document.getElementById('lt-beid').value)||1,
+        leaveTypeId:parseInt(document.getElementById('lt-bltid').value)||1,
+        leaveBalance:parseInt(document.getElementById('lt-bdays').value)||15
+      });
+      m.innerHTML=alertBox('Leave balance allocated!'); document.getElementById('lt-bal-form').reset(); loadLeaveBalancesAdmin();
+    }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+  });
+}
+async function loadLeaveStaffAdmin(){
+  const tb=document.getElementById('lta-staff-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="5" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('LeaveTracker/getAllEmployee');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="5" class="text-center text-muted py-3">No staff members listed.</td></tr>`;return;}
+    tb.innerHTML=items.map(e=>{
+      const id=e.employeeId||e.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${e.employeeName||'—'}</strong><br><small class="text-muted">${e.email||''}</small></td>
+        <td class="small">${e.department||'—'}</td>
+        <td class="small text-muted">${e.phone||'—'}</td>
+        <td><button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteLeaveStaff(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function loadLeaveBalancesAdmin(){
+  const tb=document.getElementById('lta-bal-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="5" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('LeaveTracker/GetAllBalances');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="5" class="text-center text-muted py-3">No leave allocations.</td></tr>`;return;}
+    tb.innerHTML=items.map(b=>{
+      const id=b.balanceId||b.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>Employee #${b.employeeId||'1'}</strong></td>
+        <td><span class="badge bg-secondary bg-opacity-25 text-secondary">Type #${b.leaveTypeId||'1'}</span></td>
+        <td class="small fw-semibold">${b.leaveBalance||0} days</td>
+        <td><button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteLeaveBalance(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function deleteLeaveStaff(id){
+  if(!confirm('Are you sure you want to delete this staff profile?'))return;
+  try{await api(`LeaveTracker/DeleteEmployee?id=${id}`,'DELETE'); loadLeaveStaffAdmin();}
+  catch(err){alert('Failed: '+err.message);}
+}
+async function deleteLeaveBalance(id){
+  if(!confirm('Are you sure you want to delete this allocation?'))return;
+  try{await api(`LeaveTracker/deleteBalanceById?id=${id}`,'DELETE'); loadLeaveBalancesAdmin();}
+  catch(err){alert('Failed: '+err.message);}
+}
+
+// 11. PROJECT COMPETITION ADMIN
+async function renderProjectcompetitionAdmin(c){
+  c.innerHTML=`
+  <div class="section-heading"><i class="bi bi-trophy me-2" style="color:var(--warning-custom)"></i>Competition Coordinator (Admin)</div>
+  <div class="section-sub">Create competitions, manage entry lists, and approve winners</div>
+  <div id="pca-msg"></div>
+  <div class="row g-4">
+    <div class="col-lg-4">
+      <div class="card">
+        <div class="card-header"><strong class="small"><i class="bi bi-plus-circle me-2"></i>Create Competition</strong></div>
+        <div class="card-body">
+          <form id="pc-comp-form">
+            <div class="mb-2"><label class="form-label">Competition Name</label><input class="form-control form-control-sm" id="pc-cname" required placeholder="National Tech Hack 2026"/></div>
+            <div class="row g-2 mb-2">
+              <div class="col-6"><label class="form-label">Start Date</label><input type="date" class="form-control form-control-sm" id="pc-csdate" required/></div>
+              <div class="col-6"><label class="form-label">End Date</label><input type="date" class="form-control form-control-sm" id="pc-cedate" required/></div>
+            </div>
+            <div class="mb-3"><label class="form-label">Description</label><textarea class="form-control form-control-sm" id="pc-cdesc" rows="3" placeholder="Hackathon rules…"></textarea></div>
+            <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-check-circle me-1"></i>Publish Competition</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-8">
+      <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong class="small"><i class="bi bi-mortarboard me-2"></i>Pending Submissions Review</strong>
+          <button class="btn btn-outline-primary btn-sm" onclick="loadCompetitionSubmissionsAdmin()"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+        <div class="card-body p-0"><div class="table-responsive">
+          <table class="table table-borderless mb-0">
+            <thead><tr><th>Project Title</th><th>GitHub</th><th>Comp ID</th><th>Status</th><th>Review Actions</th></tr></thead>
+            <tbody id="pca-sub-tbody"><tr><td colspan="5" class="text-center py-4">Loading…</td></tr></tbody>
+          </table>
+        </div></div>
+      </div>
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong class="small"><i class="bi bi-trophy-fill me-2"></i>Active Competitions</strong>
+          <button class="btn btn-outline-primary btn-sm" onclick="loadCompetitionsAdmin()"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+        <div class="card-body p-0"><div class="table-responsive">
+          <table class="table table-borderless mb-0">
+            <thead><tr><th>ID</th><th>Competition Name</th><th>Timeline</th><th>Action</th></tr></thead>
+            <tbody id="pca-comp-tbody"><tr><td colspan="4" class="text-center py-4">Loading…</td></tr></tbody>
+          </table>
+        </div></div>
+      </div>
+    </div>
+  </div>`;
+  loadCompetitionSubmissionsAdmin();
+  loadCompetitionsAdmin();
+
+  document.getElementById('pc-comp-form').addEventListener('submit',async e=>{
+    e.preventDefault(); const m=document.getElementById('pca-msg');
+    try{
+      await api('ProjectCompetition/competition','POST',{
+        competitionName:document.getElementById('pc-cname').value,
+        startDate:document.getElementById('pc-csdate').value,
+        endDate:document.getElementById('pc-cedate').value,
+        description:document.getElementById('pc-cdesc').value
+      });
+      m.innerHTML=alertBox('Competition published!'); document.getElementById('pc-comp-form').reset(); loadCompetitionsAdmin();
+    }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+  });
+}
+async function loadCompetitionSubmissionsAdmin(){
+  const tb=document.getElementById('pca-sub-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="5" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('ProjectCompetition/project');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="5" class="text-center text-muted py-3">No submissions.</td></tr>`;return;}
+    tb.innerHTML=items.map(p=>{
+      const id=p.projectId||p.id||0;
+      const st=p.status||'Pending';
+      const sc=st==='Approved'?'var(--success-custom)':st==='Rejected'?'var(--danger-custom)':'var(--warning-custom)';
+      return `<tr>
+        <td><strong>${p.projectTitle||'—'}</strong><br><small class="text-muted">${(p.description||'').substring(0,50)}</small></td>
+        <td class="small">${p.githubLink?`<a href="${p.githubLink}" target="_blank" class="text-accent">Link</a>`:'—'}</td>
+        <td class="small text-muted">Comp #${p.competitionId||'1'}</td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+        <td>
+          <div class="btn-group">
+            <button class="btn btn-success btn-sm py-1 px-2" onclick="reviewCompetitionProject(${id}, 'approve')" title="Approve"><i class="bi bi-check-lg"></i></button>
+            <button class="btn btn-warning btn-sm py-1 px-2 text-dark" onclick="reviewCompetitionProject(${id}, 'reject')" title="Reject"><i class="bi bi-x-lg"></i></button>
+            <button class="btn btn-primary btn-sm py-1 px-2" onclick="reviewCompetitionProject(${id}, 'winner')" title="Mark Winner"><i class="bi bi-trophy-fill"></i></button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function loadCompetitionsAdmin(){
+  const tb=document.getElementById('pca-comp-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="4" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('ProjectCompetition/GetAllCompetition');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="4" class="text-center text-muted py-3">No active competitions.</td></tr>`;return;}
+    tb.innerHTML=items.map(c=>{
+      const id=c.competitionId||c.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${c.competitionName||'—'}</strong><br><small class="text-muted">${(c.description||'').substring(0,50)}</small></td>
+        <td class="small text-muted">${c.startDate?new Date(c.startDate).toLocaleDateString():'—'} \| ${c.endDate?new Date(c.endDate).toLocaleDateString():'—'}</td>
+        <td><button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteCompetition(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="4" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function reviewCompetitionProject(id, action){
+  try{
+    await api(`ProjectCompetition/project/${action}/${id}`,'PUT');
+    loadCompetitionSubmissionsAdmin();
+  }catch(err){alert('Failed: '+err.message);}
+}
+async function deleteCompetition(id){
+  if(!confirm('Are you sure you want to delete this competition?'))return;
+  try{await api(`ProjectCompetition/delete/${id}`,'DELETE'); loadCompetitionsAdmin();}
+  catch(err){alert('Failed: '+err.message);}
+}
+
+// 12. SMART PARKING ADMIN
+async function renderSmartparkingAdmin(c){
+  c.innerHTML=`
+  <div class="section-heading"><i class="bi bi-p-circle me-2" style="color:var(--success-custom)"></i>Smart Parking Setup (Admin)</div>
+  <div class="section-sub">Configure sites, floors, manage clients, and monitor exit transactions</div>
+  <div id="spa-msg"></div>
+  
+  <ul class="nav nav-pills mb-3 gap-2" role="tablist">
+    <li class="nav-item"><button class="btn btn-outline-primary btn-sm active" data-bs-toggle="pill" data-bs-target="#spa-client" type="button">Clients Manager</button></li>
+    <li class="nav-item"><button class="btn btn-outline-primary btn-sm" data-bs-toggle="pill" data-bs-target="#spa-site" type="button">Sites Manager</button></li>
+    <li class="nav-item"><button class="btn btn-outline-primary btn-sm" data-bs-toggle="pill" data-bs-target="#spa-floor" type="button">Floors Setup</button></li>
+  </ul>
+  
+  <div class="tab-content">
+    <!-- CLIENTS -->
+    <div class="tab-pane fade show active" id="spa-client">
+      <div class="row g-4">
+        <div class="col-md-5">
+          <div class="card">
+            <div class="card-header"><strong class="small"><i class="bi bi-plus-circle"></i> Add Client</strong></div>
+            <div class="card-body">
+              <form id="spa-client-form">
+                <div class="mb-3"><label class="form-label">Client Name</label><input class="form-control form-control-sm" id="spa-clname" required placeholder="Inorbit Mall Group"/></div>
+                <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-check-circle"></i> Save Client</button>
+              </form>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-7">
+          <div class="card">
+            <div class="card-header"><strong class="small"><i class="bi bi-people"></i> Registered Clients</strong></div>
+            <div class="card-body p-0"><div class="table-responsive">
+              <table class="table table-borderless mb-0">
+                <thead><tr><th>Client ID</th><th>Client Name</th><th>Action</th></tr></thead>
+                <tbody id="spa-client-tbody"><tr><td colspan="3" class="text-center py-4">Loading…</td></tr></tbody>
+              </table>
+            </div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- SITES -->
+    <div class="tab-pane fade" id="spa-site">
+      <div class="row g-4">
+        <div class="col-md-5">
+          <div class="card">
+            <div class="card-header"><strong class="small"><i class="bi bi-plus-circle"></i> Add Parking Site</strong></div>
+            <div class="card-body">
+              <form id="spa-site-form">
+                <div class="mb-2"><label class="form-label">Site Name</label><input class="form-control form-control-sm" id="spa-sname" required placeholder="Wroclavia site"/></div>
+                <div class="mb-3"><label class="form-label">Client ID</label><input type="number" class="form-control form-control-sm" id="spa-sclid" required value="1"/></div>
+                <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-check-circle"></i> Save Site</button>
+              </form>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-7">
+          <div class="card">
+            <div class="card-header"><strong class="small"><i class="bi bi-geo-alt"></i> Sites Catalog</strong></div>
+            <div class="card-body p-0"><div class="table-responsive">
+              <table class="table table-borderless mb-0">
+                <thead><tr><th>Site ID</th><th>Site Name</th><th>Client ID</th><th>Action</th></tr></thead>
+                <tbody id="spa-site-tbody"><tr><td colspan="4" class="text-center py-4">Loading…</td></tr></tbody>
+              </table>
+            </div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- FLOORS -->
+    <div class="tab-pane fade" id="spa-floor">
+      <div class="row g-4">
+        <div class="col-md-5">
+          <div class="card">
+            <div class="card-header"><strong class="small"><i class="bi bi-plus-circle"></i> Add Floor Level</strong></div>
+            <div class="card-body">
+              <form id="spa-floor-form">
+                <div class="mb-2"><label class="form-label">Floor Label</label><input class="form-control form-control-sm" id="spa-flbl" required placeholder="Floor P-1"/></div>
+                <div class="mb-3"><label class="form-label">Site ID</label><input type="number" class="form-control form-control-sm" id="spa-fsid" required value="1"/></div>
+                <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-check-circle"></i> Save Floor</button>
+              </form>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-7">
+          <div class="card">
+            <div class="card-header"><strong class="small"><i class="bi bi-layers"></i> Floor Levels</strong></div>
+            <div class="card-body p-0"><div class="table-responsive">
+              <table class="table table-borderless mb-0">
+                <thead><tr><th>Floor ID</th><th>Floor Label</th><th>Site ID</th><th>Action</th></tr></thead>
+                <tbody id="spa-floor-tbody"><tr><td colspan="4" class="text-center py-4">Loading…</td></tr></tbody>
+              </table>
+            </div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+
+  loadSmartClientsAdmin();
+  loadSmartSitesAdmin();
+  loadSmartFloorsAdmin();
+
+  document.getElementById('spa-client-form').addEventListener('submit',async e=>{
+    e.preventDefault(); const m=document.getElementById('spa-msg');
+    try{
+      await api('SmartParking/AddClient','POST',{clientName:document.getElementById('spa-clname').value});
+      m.innerHTML=alertBox('Parking Client registered!'); document.getElementById('spa-client-form').reset(); loadSmartClientsAdmin();
+    }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+  });
+
+  document.getElementById('spa-site-form').addEventListener('submit',async e=>{
+    e.preventDefault(); const m=document.getElementById('spa-msg');
+    try{
+      await api('SmartParking/AddClientSite','POST',{
+        siteName:document.getElementById('spa-sname').value,
+        clientId:parseInt(document.getElementById('spa-sclid').value)||1
+      });
+      m.innerHTML=alertBox('Parking Site saved!'); document.getElementById('spa-site-form').reset(); loadSmartSitesAdmin();
+    }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+  });
+
+  document.getElementById('spa-floor-form').addEventListener('submit',async e=>{
+    e.preventDefault(); const m=document.getElementById('spa-msg');
+    try{
+      await api('SmartParking/AddFloor','POST',{
+        floorNo:document.getElementById('spa-flbl').value,
+        siteId:parseInt(document.getElementById('spa-fsid').value)||1
+      });
+      m.innerHTML=alertBox('Floor saved!'); document.getElementById('spa-floor-form').reset(); loadSmartFloorsAdmin();
+    }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+  });
+}
+async function loadSmartClientsAdmin(){
+  const tb=document.getElementById('spa-client-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="3" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('SmartParking/GetAllClients');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="3" class="text-center text-muted py-3">No clients found.</td></tr>`;return;}
+    tb.innerHTML=items.map(c=>{
+      const id=c.clientId||c.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${c.clientName||'—'}</strong></td>
+        <td><button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteSmartClient(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="3" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function loadSmartSitesAdmin(){
+  const tb=document.getElementById('spa-site-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="4" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('SmartParking/GetAllSites');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="4" class="text-center text-muted py-3">No sites listed.</td></tr>`;return;}
+    tb.innerHTML=items.map(s=>{
+      const id=s.siteId||s.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${s.siteName||'—'}</strong></td>
+        <td>Client #${s.clientId||'1'}</td>
+        <td><button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteSmartSite(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="4" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function loadSmartFloorsAdmin(){
+  const tb=document.getElementById('spa-floor-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="4" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('SmartParking/GetAllFloor');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="4" class="text-center text-muted py-3">No floors listed.</td></tr>`;return;}
+    tb.innerHTML=items.map(f=>{
+      const id=f.floorId||f.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${f.floorNo||'—'}</strong></td>
+        <td>Site #${f.siteId||'1'}</td>
+        <td><button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteSmartFloor(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="4" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function deleteSmartClient(id){
+  if(!confirm('Are you sure you want to delete this client?'))return;
+  try{await api('SmartParking/DeleteClient','POST',{clientId:id}); loadSmartClientsAdmin();}
+  catch(err){alert('Failed: '+err.message);}
+}
+async function deleteSmartSite(id){
+  if(!confirm('Are you sure you want to delete this site?'))return;
+  try{await api('SmartParking/DeleteSite','POST',{siteId:id}); loadSmartSitesAdmin();}
+  catch(err){alert('Failed: '+err.message);}
+}
+async function deleteSmartFloor(id){
+  if(!confirm('Are you sure you want to delete this floor level?'))return;
+  try{await api('SmartParking/DeleteFloor','POST',{floorId:id}); loadSmartFloorsAdmin();}
+  catch(err){alert('Failed: '+err.message);}
+}
+
+// 13. SURVEY ADMIN
+async function renderSurveyAdmin(c){
+  c.innerHTML=`
+  <div class="section-heading"><i class="bi bi-card-checklist me-2" style="color:#bc8cff"></i>Survey Builder & Analytics</div>
+  <div class="section-sub">Create dynamic surveys, build questionnaires, and analyze response counts</div>
+  <div id="sua-msg"></div>
+  <div class="row g-4">
+    <div class="col-lg-5">
+      <div class="card mb-4">
+        <div class="card-header"><strong class="small"><i class="bi bi-plus-circle me-2"></i>Create New Survey</strong></div>
+        <div class="card-body">
+          <form id="su-add-form">
+            <div class="mb-2"><label class="form-label">Survey Title</label><input class="form-control form-control-sm" id="su-title" required placeholder="Student Course Feedback"/></div>
+            <div class="mb-3"><label class="form-label">Description</label><textarea class="form-control form-control-sm" id="su-desc" rows="2" placeholder="Tell users what the survey is about…"></textarea></div>
+            <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-check-circle me-1"></i>Publish Survey</button>
+          </form>
+        </div>
+      </div>
+      <div class="card mb-4">
+        <div class="card-header"><strong class="small"><i class="bi bi-question-circle me-2"></i>Add Question</strong></div>
+        <div class="card-body">
+          <form id="su-q-form">
+            <div class="mb-2"><label class="form-label">Survey ID</label><input type="number" class="form-control form-control-sm" id="su-qsid" required value="1"/></div>
+            <div class="mb-3"><label class="form-label">Question Text</label><input class="form-control form-control-sm" id="su-qtext" required placeholder="How rate your instructor?"/></div>
+            <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-plus-circle me-1"></i>Add Question</button>
+          </form>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><strong class="small"><i class="bi bi-ui-checks-grid me-2"></i>Add Option</strong></div>
+        <div class="card-body">
+          <form id="su-o-form">
+            <div class="mb-2"><label class="form-label">Question ID</label><input type="number" class="form-control form-control-sm" id="su-oqid" required value="1"/></div>
+            <div class="mb-3"><label class="form-label">Option Value</label><input class="form-control form-control-sm" id="su-otext" required placeholder="Excellent (5/5)"/></div>
+            <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-plus-circle me-1"></i>Add Option</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-7">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong class="small"><i class="bi bi-card-list me-2"></i>Surveys Dashboard</strong>
+          <button class="btn btn-outline-primary btn-sm" onclick="loadSurveysAdmin()"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+        <div class="card-body p-0"><div class="table-responsive">
+          <table class="table table-borderless mb-0">
+            <thead><tr><th>ID</th><th>Survey Title</th><th>Status</th><th>Responses Log</th></tr></thead>
+            <tbody id="sua-tbody"><tr><td colspan="4" class="text-center py-4">Loading…</td></tr></tbody>
+          </table>
+        </div></div>
+      </div>
+    </div>
+  </div>`;
+  loadSurveysAdmin();
+
+  document.getElementById('su-add-form').addEventListener('submit',async e=>{
+    e.preventDefault(); const m=document.getElementById('sua-msg');
+    try{
+      await api('Survey/CreateSurvey','POST',{
+        surveyTitle:document.getElementById('su-title').value,
+        surveyDescription:document.getElementById('su-desc').value,
+        userId:1,
+        createdOn:new Date().toISOString()
+      });
+      m.innerHTML=alertBox('Survey profile published successfully!'); document.getElementById('su-add-form').reset(); loadSurveysAdmin();
+    }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+  });
+
+  document.getElementById('su-q-form').addEventListener('submit',async e=>{
+    e.preventDefault(); const m=document.getElementById('sua-msg');
+    try{
+      await api('Survey/AddQuestion','POST',{
+        surveyId:parseInt(document.getElementById('su-qsid').value)||1,
+        questionText:document.getElementById('su-qtext').value
+      });
+      m.innerHTML=alertBox('Question added to survey!'); document.getElementById('su-q-form').reset();
+    }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+  });
+
+  document.getElementById('su-o-form').addEventListener('submit',async e=>{
+    e.preventDefault(); const m=document.getElementById('sua-msg');
+    try{
+      await api('Survey/AddOption','POST',{
+        questionId:parseInt(document.getElementById('su-oqid').value)||1,
+        optionText:document.getElementById('su-otext').value
+      });
+      m.innerHTML=alertBox('Option added to question!'); document.getElementById('su-o-form').reset();
+    }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+  });
+}
+async function loadSurveysAdmin(){
+  const tb=document.getElementById('sua-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="4" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('Survey/GetAllSurveys');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="4" class="text-center text-muted py-3">No surveys found.</td></tr>`;return;}
+    
+    // We will render rows and fetch survey response count asynchronously
+    tb.innerHTML=items.map(s=>{
+      const id=s.surveyId||s.id||0;
+      const st=s.isActive?'Active':'Closed';
+      const sc=s.isActive?'var(--success-custom)':'var(--text-muted-custom)';
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${s.surveyTitle||'—'}</strong><br><small class="text-muted">${(s.surveyDescription||'').substring(0,50)}</small></td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+        <td><button class="btn btn-outline-primary btn-sm py-1 px-2" onclick="loadSurveyResponsesAdmin(${id})"><i class="bi bi-bar-chart me-1"></i>Fetch Counts</button></td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="4" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+async function loadSurveyResponsesAdmin(surveyId){
+  try{
+    const d=await api(`Survey/survey-response-by-survey/${surveyId}`);
+    const responses=d.data||d||[];
+    alert(`Survey ID #${surveyId} has ${responses.length} responses registered.`);
+  }catch(err){alert('Failed to load count: '+err.message);}
+}
+
+// 14. USER APP ADMIN
+async function renderUserappAdmin(c){
+  c.innerHTML=`
+  <div class="section-heading"><i class="bi bi-person-gear me-2" style="color:var(--accent)"></i>User Administration</div>
+  <div class="section-sub">Search and update accounts, reset credentials, and oversee profile policies</div>
+  <div id="uap-msg"></div>
+  <div class="row g-4">
+    <div class="col-lg-4">
+      <div class="card">
+        <div class="card-header"><strong class="small"><i class="bi bi-key me-2"></i>Reset User Password</strong></div>
+        <div class="card-body">
+          <form id="ua-reset-form">
+            <div class="mb-2"><label class="form-label">Customer ID</label><input type="number" class="form-control form-control-sm" id="ua-rcid" required value="1"/></div>
+            <div class="mb-3"><label class="form-label">New Password</label><input type="password" class="form-control form-control-sm" id="ua-rpwd" required placeholder="Min 6 characters"/></div>
+            <button type="submit" class="btn btn-danger btn-sm w-100"><i class="bi bi-key-fill me-1"></i>Change Password</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-8">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong class="small"><i class="bi bi-people me-2"></i>System User List</strong>
+          <button class="btn btn-outline-primary btn-sm" onclick="loadUsersAdmin()"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+        <div class="card-body p-0"><div class="table-responsive">
+          <table class="table table-borderless mb-0">
+            <thead><tr><th>ID</th><th>User Details</th><th>Username</th><th>Phone</th><th>Status</th></tr></thead>
+            <tbody id="uap-tbody"><tr><td colspan="5" class="text-center py-4">Loading…</td></tr></tbody>
+          </table>
+        </div></div>
+      </div>
+    </div>
+  </div>`;
+  loadUsersAdmin();
+
+  document.getElementById('ua-reset-form').addEventListener('submit',async e=>{
+    e.preventDefault(); const m=document.getElementById('uap-msg');
+    const cid=document.getElementById('ua-rcid').value;
+    try{
+      await api(`UserApp/update-password/${cid}`,'PUT',{password:document.getElementById('ua-rpwd').value});
+      m.innerHTML=alertBox('User password updated successfully!'); document.getElementById('ua-reset-form').reset();
+    }catch(err){m.innerHTML=alertBox('Error: '+err.message,'danger');}
+  });
+}
+async function loadUsersAdmin(){
+  const tb=document.getElementById('uap-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="5" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('UserApp/GetAllUsers');
+    const items=d.data||d||[];
+    if(!items.length){tb.innerHTML=`<tr><td colspan="5" class="text-center text-muted py-3">No profiles listed.</td></tr>`;return;}
+    tb.innerHTML=items.map(u=>{
+      const id=u.customerId||u.id||0;
+      const name=`${u.firstName||''} ${u.lastName||''}`.trim()||'User';
+      const st=u.isActive===false?'Inactive':'Active';
+      const sc=st==='Active'?'var(--success-custom)':'var(--text-muted-custom)';
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${name}</strong><br><small class="text-muted">${u.email||''}</small></td>
+        <td class="small text-muted">@${u.userName||'—'}</td>
+        <td class="small text-muted">${u.phone||'—'}</td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+      </tr>`;
+    }).join('');
+  }catch(err){tb.innerHTML=`<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+}
+
+// Hook up Admin mode listener
+document.addEventListener('DOMContentLoaded',()=>{
+  const sw = document.getElementById('admin-mode-switch');
+  if(sw){
+    sw.addEventListener('change', function() {
+      state.adminMode = this.checked;
+      switchApp(state.currentApp);
+    });
+  }
+});
+

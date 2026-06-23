@@ -458,22 +458,27 @@
   </div>
 
   <div class="mt-auto p-3 border-top" style="border-color:var(--sidebar-border)!important;font-size:.7rem;color:var(--text-muted-custom);">
-    <i class="bi bi-link-45deg"></i> freeapi.gerocerymaster.in
+    <i class="bi bi-link-45deg"></i> api.freeprojectapi.com
   </div>
 </nav>
 
 <!-- ════════════════════════ MAIN ════════════════════════ -->
 <div id="main-wrapper">
-  <!-- Topbar -->
   <header id="topbar">
     <button id="sidebar-toggle" aria-label="Toggle sidebar"><i class="bi bi-list"></i></button>
     <div>
       <div id="topbar-title">Dashboard</div>
       <div id="topbar-breadcrumb">Home / Overview</div>
     </div>
-    <div class="topbar-api-badge">
-      <span class="api-dot"></span>
-      <span id="api-status-label">API Connected</span>
+    <div class="ms-auto d-flex align-items-center gap-3">
+      <div class="form-check form-switch m-0 d-flex align-items-center gap-2">
+        <input class="form-check-input" type="checkbox" role="switch" id="admin-mode-switch" style="cursor:pointer">
+        <label class="form-check-label small fw-semibold text-muted" for="admin-mode-switch" style="cursor:pointer; user-select:none;">Admin Mode</label>
+      </div>
+      <div class="topbar-api-badge m-0">
+        <span class="api-dot"></span>
+        <span id="api-status-label">API Connected</span>
+      </div>
     </div>
   </header>
 
