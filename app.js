@@ -19,6 +19,349 @@ async function api(path, method='GET', body=null) {
 const spinner  = ()=>`<div class="d-flex justify-content-center py-5"><div class="spinner-border" style="color:var(--accent)"></div></div>`;
 const alertBox = (msg,type='success')=>`<div class="alert alert-${type} d-flex align-items-center gap-2 mt-3"><i class="bi bi-${type==='success'?'check-circle':'exclamation-triangle'}"></i>${msg}</div>`;
 
+// Premium Paginated & Searchable Table Utility
+function initPremiumTable(containerId, data, columns, options = {}) {
+  const container = typeof containerId === 'string' ? document.getElementById(containerId) : containerId;
+  if (!container) return;
+
+  const pageSize = options.pageSize || 5;
+  const searchPlaceholder = options.searchPlaceholder || 'Search records...';
+  const emptyMessage = options.emptyMessage || 'No matching records found.';
+  
+  let currentPage = 1;
+  let searchQuery = '';
+
+  // Draw container layout
+  container.className = "d-flex flex-column gap-3";
+  container.innerHTML = `
+    <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap">
+      <div class="position-relative flex-grow-1" style="max-width: 320px;">
+        <span class="position-absolute top-50 translate-middle-y start-0 ps-3 text-muted">
+          <i class="bi bi-search"></i>
+        </span>
+        <input type="text" class="form-control form-control-sm ps-5 border-secondary-subtle" 
+               placeholder="${searchPlaceholder}" id="${container.id || 'tbl'}-search">
+      </div>
+      <div id="${container.id || 'tbl'}-actions" class="d-flex gap-2 align-items-center"></div>
+    </div>
+    
+    <div class="card border border-secondary-subtle shadow-sm overflow-hidden rounded-3">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              ${columns.map(col => `<th class="text-secondary small fw-semibold uppercase py-3" style="${col.style || ''}">${col.label}</th>`).join('')}
+            </tr>
+          </thead>
+          <tbody id="${container.id || 'tbl'}-tbody">
+            <tr><td colspan="${columns.length}" class="text-center py-4">${spinner()}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="${container.id || 'tbl'}-empty" class="d-none text-center py-5">
+        <div class="text-secondary mb-3"><i class="bi bi-folder-x fs-1"></i></div>
+        <h6 class="text-secondary fw-semibold">No Records Found</h6>
+        <p class="text-muted small mb-0">${emptyMessage}</p>
+      </div>
+    </div>
+    
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-1">
+      <div class="text-muted small" id="${container.id || 'tbl'}-info"></div>
+      <nav aria-label="Page navigation">
+        <ul class="pagination pagination-sm mb-0 justify-content-end" id="${container.id || 'tbl'}-pagination"></ul>
+      </nav>
+    </div>
+  `;
+
+  if (options.actionsHTML) {
+    const act = document.getElementById(`${container.id || 'tbl'}-actions`);
+    if (act) act.innerHTML = options.actionsHTML;
+  }
+
+  const searchInput = document.getElementById(`${container.id || 'tbl'}-search`);
+  const tbody = document.getElementById(`${container.id || 'tbl'}-tbody`);
+  const emptyState = document.getElementById(`${container.id || 'tbl'}-empty`);
+  const infoEl = document.getElementById(`${container.id || 'tbl'}-info`);
+  const paginationUl = document.getElementById(`${container.id || 'tbl'}-pagination`);
+
+  function render() {
+    // Filter
+    const filtered = data.filter(row => {
+      if (!searchQuery) return true;
+      return columns.some(col => {
+        const val = col.searchVal ? col.searchVal(row) : (row[col.key] !== undefined ? row[col.key] : '');
+        return String(val).toLowerCase().includes(searchQuery.toLowerCase());
+      });
+    });
+
+    const totalRows = filtered.length;
+    const totalPages = Math.ceil(totalRows / pageSize) || 1;
+    if (currentPage > totalPages) currentPage = totalPages;
+
+    const startIdx = (currentPage - 1) * pageSize;
+    const endIdx = Math.min(startIdx + pageSize, totalRows);
+    const pageData = filtered.slice(startIdx, endIdx);
+
+    if (totalRows === 0) {
+      tbody.innerHTML = '';
+      emptyState.classList.remove('d-none');
+      infoEl.textContent = 'Showing 0 to 0 of 0 entries';
+      paginationUl.innerHTML = '';
+      return;
+    }
+
+    emptyState.classList.add('d-none');
+    tbody.innerHTML = pageData.map((row, index) => {
+      const rowNum = startIdx + index + 1;
+      return `<tr>
+        ${columns.map(col => `<td>${col.render ? col.render(row, rowNum) : (row[col.key] !== undefined ? row[col.key] : '—')}</td>`).join('')}
+      </tr>`;
+    }).join('');
+
+    infoEl.textContent = `Showing ${startIdx + 1} to ${endIdx} of ${totalRows} entries`;
+
+    // Render Premium Pagination
+    let pagHTML = `
+      <li class="page-item ${currentPage === 1 ? 'disabled' : ''}">
+        <button class="page-link shadow-none border-secondary-subtle" data-page="${currentPage - 1}">
+          <i class="bi bi-chevron-left"></i>
+        </button>
+      </li>
+    `;
+
+    const maxPagesToShow = 5;
+    let startPage = Math.max(1, currentPage - Math.floor(maxPagesToShow / 2));
+    let endPage = Math.min(totalPages, startPage + maxPagesToShow - 1);
+    if (endPage - startPage + 1 < maxPagesToShow) {
+      startPage = Math.max(1, endPage - maxPagesToShow + 1);
+    }
+
+    if (startPage > 1) {
+      pagHTML += `
+        <li class="page-item"><button class="page-link shadow-none border-secondary-subtle" data-page="1">1</button></li>
+        ${startPage > 2 ? `<li class="page-item disabled"><span class="page-link border-secondary-subtle">...</span></li>` : ''}
+      `;
+    }
+
+    for (let p = startPage; p <= endPage; p++) {
+      pagHTML += `
+        <li class="page-item ${currentPage === p ? 'active' : ''}">
+          <button class="page-link shadow-none border-secondary-subtle" data-page="${p}">${p}</button>
+        </li>
+      `;
+    }
+
+    if (endPage < totalPages) {
+      pagHTML += `
+        ${endPage < totalPages - 1 ? `<li class="page-item disabled"><span class="page-link border-secondary-subtle">...</span></li>` : ''}
+        <li class="page-item"><button class="page-link shadow-none border-secondary-subtle" data-page="${totalPages}">${totalPages}</button></li>
+      `;
+    }
+
+    pagHTML += `
+      <li class="page-item ${currentPage === totalPages ? 'disabled' : ''}">
+        <button class="page-link shadow-none border-secondary-subtle" data-page="${currentPage + 1}">
+          <i class="bi bi-chevron-right"></i>
+        </button>
+      </li>
+    `;
+
+    paginationUl.innerHTML = pagHTML;
+
+    // Attach click events
+    paginationUl.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const p = parseInt(btn.dataset.page);
+        if (p >= 1 && p <= totalPages) {
+          currentPage = p;
+          render();
+        }
+      });
+    });
+  }
+
+  // Search input change
+  searchInput.addEventListener('input', (e) => {
+    searchQuery = e.target.value;
+    currentPage = 1;
+    render();
+  });
+
+  // Run first render
+  render();
+}
+
+// Reusable premium form submission handler with inline button spinner / loading text
+function setupFormSubmit(formId, submitBtnId, apiCallFn, successCallback, msgId) {
+  const form = document.getElementById(formId);
+  if (!form) return;
+  const btn = document.getElementById(submitBtnId) || form.querySelector('button[type="submit"]');
+  const msgEl = msgId ? document.getElementById(msgId) : null;
+  if (!btn) return;
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Saving...`;
+    
+    if (msgEl) {
+      msgEl.innerHTML = '';
+      msgEl.classList.add('d-none');
+    }
+
+    try {
+      await apiCallFn();
+      btn.innerHTML = `<i class="bi bi-check-circle me-1"></i>Saved!`;
+      setTimeout(() => {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+      }, 1500);
+      form.reset();
+      if (successCallback) successCallback();
+    } catch (err) {
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+      if (msgEl) {
+        msgEl.innerHTML = alertBox(err.message, 'danger');
+        msgEl.classList.remove('d-none');
+      } else {
+        alert('Error: ' + err.message);
+      }
+    }
+  });
+}
+
+// Premium Pure Vanilla JS Table Wrapper (Search, Pagination, Empty State)
+function makeTablePremium(tbodyId, data, renderRowFn, options = {}) {
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+
+  const table = tbody.closest('table');
+  if (!table) return;
+
+  const pageSize = options.pageSize || 5;
+  const card = table.closest('.card');
+  let searchInput = null;
+
+  if (card) {
+    searchInput = card.querySelector('input[type="text"]') || card.querySelector('input[placeholder*="Search"]');
+  }
+
+  if (!searchInput) {
+    let searchWrapper = card ? card.querySelector('.premium-search-wrapper') : null;
+    if (!searchWrapper) {
+      searchWrapper = document.createElement('div');
+      searchWrapper.className = 'premium-search-wrapper px-3 py-2 border-bottom border-secondary-subtle d-flex align-items-center gap-2';
+      searchWrapper.innerHTML = `
+        <div class="position-relative flex-grow-1" style="max-width: 320px;">
+          <span class="position-absolute top-50 translate-middle-y start-0 ps-3 text-muted" style="font-size: .85rem;">
+            <i class="bi bi-search"></i>
+          </span>
+          <input type="text" class="form-control form-control-sm ps-5 border-secondary-subtle" 
+                 placeholder="Search records...">
+        </div>
+      `;
+      const target = table.parentElement.classList.contains('table-responsive') ? table.parentElement : table;
+      target.parentNode.insertBefore(searchWrapper, target);
+    }
+    searchInput = searchWrapper.querySelector('input');
+  }
+
+  let pagWrapper = card ? card.querySelector('.premium-pag-wrapper') : null;
+  if (!pagWrapper) {
+    pagWrapper = document.createElement('div');
+    pagWrapper.className = 'premium-pag-wrapper px-3 py-2 border-top border-secondary-subtle d-flex justify-content-between align-items-center flex-wrap gap-2';
+    const target = table.parentElement.classList.contains('table-responsive') ? table.parentElement : table;
+    target.parentNode.insertBefore(pagWrapper, target.nextSibling);
+  }
+
+  let currentPage = 1;
+  let searchQuery = '';
+
+  function render() {
+    const filtered = data.filter((item, idx) => {
+      if (!searchQuery) return true;
+      const searchStr = Object.values(item).map(v => v === null || v === undefined ? '' : String(v)).join(' ').toLowerCase();
+      return searchStr.includes(searchQuery.toLowerCase());
+    });
+
+    const totalRows = filtered.length;
+    const totalPages = Math.ceil(totalRows / pageSize) || 1;
+    if (currentPage > totalPages) currentPage = totalPages;
+
+    const startIdx = (currentPage - 1) * pageSize;
+    const endIdx = Math.min(startIdx + pageSize, totalRows);
+    const pageData = filtered.slice(startIdx, endIdx);
+
+    const columnsCount = table.querySelectorAll('thead th').length || 6;
+
+    if (totalRows === 0) {
+      tbody.innerHTML = `<tr><td colspan="${columnsCount}" class="text-center py-4 text-muted">
+        <div class="mb-2 text-secondary"><i class="bi bi-folder-x fs-3"></i></div>
+        <div class="fw-semibold">No records found</div>
+      </td></tr>`;
+      pagWrapper.innerHTML = `<div class="text-muted small">Showing 0 to 0 of 0 entries</div>`;
+      return;
+    }
+
+    tbody.innerHTML = pageData.map((item, index) => {
+      const globalIndex = startIdx + index + 1;
+      return renderRowFn(item, globalIndex);
+    }).join('');
+
+    pagWrapper.innerHTML = `
+      <div class="text-muted small">Showing ${startIdx + 1} to ${endIdx} of ${totalRows} entries</div>
+      <nav aria-label="Table navigation">
+        <ul class="pagination pagination-sm mb-0 justify-content-end">
+          <li class="page-item ${currentPage === 1 ? 'disabled' : ''}">
+            <button class="page-link shadow-none border-secondary-subtle" data-page="${currentPage - 1}">
+              <i class="bi bi-chevron-left"></i>
+            </button>
+          </li>
+          ${Array.from({ length: totalPages }, (_, i) => i + 1)
+            .filter(p => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1)
+            .map((p, idx, arr) => {
+              let html = '';
+              if (idx > 0 && p - arr[idx - 1] > 1) {
+                html += `<li class="page-item disabled"><span class="page-link border-secondary-subtle">...</span></li>`;
+              }
+              html += `
+                <li class="page-item ${currentPage === p ? 'active' : ''}">
+                  <button class="page-link shadow-none border-secondary-subtle" data-page="${p}">${p}</button>
+                </li>
+              `;
+              return html;
+            }).join('')}
+          <li class="page-item ${currentPage === totalPages ? 'disabled' : ''}">
+            <button class="page-link shadow-none border-secondary-subtle" data-page="${currentPage + 1}">
+              <i class="bi bi-chevron-right"></i>
+            </button>
+          </li>
+        </ul>
+      </nav>
+    `;
+
+    pagWrapper.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const p = parseInt(btn.dataset.page);
+        if (p >= 1 && p <= totalPages) {
+          currentPage = p;
+          render();
+        }
+      });
+    });
+  }
+
+  searchInput.oninput = (e) => {
+    searchQuery = e.target.value;
+    currentPage = 1;
+    render();
+  };
+
+  render();
+}
+
 const TITLES = {home:'Dashboard',bankloan:'Bank Loan',busbooking:'Bus Booking',collegeproject:'College Project',
   ecommerce:'Ecommerce',employeeapp:'Employee App',employeeonboarding:'Employee Onboarding',
   enquiry:'Enquiry',feestracking:'Fees Tracking',goaltracker:'Goal Tracker',leavetracker:'Leave Tracker',
@@ -1309,12 +1652,13 @@ document.addEventListener('DOMContentLoaded',()=>switchApp('home'));
    confirmed from live responses.
 ══════════════════════════════════════════════════════════════ */
 
-// Patch EmployeeApp – real fields: employeeId,fullName,email,phone,gender,departmentName,designationName
-const _origRenderEmpTable = renderEmployeeTable;
+/* ══════ FIELD-NAME PATCHES & UX WRAPPERS (applied after load) ══════
+   Overrides specific render/load helpers with correct API field names,
+   adding Search & Pagination wrapper (makeTablePremium) and Button loading states.
+══════════════════════════════════════════════════════════════ */
+
 renderEmployeeTable = function(list) {
-  const tb = document.getElementById('emp-tbody'); if (!tb) return;
-  if (!list.length) { tb.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-3">No employees found.</td></tr>`; return; }
-  tb.innerHTML = list.map((e, i) => {
+  makeTablePremium('emp-tbody', list, (e, i) => {
     const name = e.fullName || e.name || '—';
     const st   = e.employeeType || 'Active';
     const sc   = st === 'Permanent' ? 'var(--success-custom)' : st === 'Contract' ? 'var(--accent)' : 'var(--warning-custom)';
@@ -1326,11 +1670,9 @@ renderEmployeeTable = function(list) {
       <td class="small text-muted">${e.phone || '—'}</td>
       <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
     </tr>`;
-  }).join('');
+  });
 };
 
-// Patch SmartParking – real fields: parkId,parkSpotNo,floorNo,buildingName,siteName,inTime,outTime,vehicleNo
-const _origRenderParkGrid = renderParkingGrid;
 renderParkingGrid = function() {
   const g = document.getElementById('parking-grid'); if (!g) return;
   g.innerHTML = '';
@@ -1348,35 +1690,168 @@ renderParkingGrid = function() {
   });
 };
 
-// Patch BankLoan table – real fields: fullName,email,applicationStatus,panCard,annualIncome,creditScore,customerPhone
-const _origLoadLoanList = loadLoanList;
 loadLoanList = async function() {
   const tb = document.getElementById('loan-tbody'); if (!tb) return;
   tb.innerHTML = `<tr><td colspan="6" class="text-center">${spinner()}</td></tr>`;
   try {
     const d = await api('BankLoan/GetAllApplications');
     const items = d.data || d || [];
-    if (!items.length) { tb.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-3">No applications yet.</td></tr>`; return; }
-    tb.innerHTML = items.map((r, i) => {
+    makeTablePremium('loan-tbody', items, (r, i) => {
       const st = r.applicationStatus || 'Pending';
-      const sc = st === 'Approve' || st === 'Approved' ? 'var(--success-custom)' : st === 'Reject' || st === 'Rejected' ? 'var(--danger-custom)' : 'var(--warning-custom)';
+      const sc = st === 'Approved' || st === 'Approve' ? 'var(--success-custom)' : st === 'Rejected' || st === 'Reject' ? 'var(--danger-custom)' : 'var(--warning-custom)';
       return `<tr>
-        <td><span class="badge bg-secondary">${i + 1}</span></td>
+        <td><span class="badge bg-secondary">${i}</span></td>
         <td><strong class="small">${r.fullName || '—'}</strong><br><small class="text-muted">${r.email || ''}</small></td>
         <td class="small text-muted">${r.panCard || '—'}</td>
         <td class="small">${r.customerPhone || '—'}</td>
         <td><span class="badge bg-secondary">${r.employmentStatus || '—'}</span></td>
         <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
       </tr>`;
-    }).join('');
+    });
   } catch (err) { tb.innerHTML = `<tr><td colspan="6" class="text-danger text-center py-3">${err.message}</td></tr>`; }
 };
 
-// Patch BusBooking – real fields confirmed: scheduleId,busName,busVehicleNo,fromLocationName,toLocationName,price,availableSeats
-// (already correct in main code, no patch needed)
+loadCPList = async function() {
+  const tb = document.getElementById('cp-tbody'); if (!tb) return;
+  tb.innerHTML = `<tr><td colspan="5" class="text-center">${spinner()}</td></tr>`;
+  try {
+    const d = await api('CollegeProject/getAllProjects');
+    const items = d.data || d || [];
+    makeTablePremium('cp-tbody', items, (r, i) => {
+      const st = r.status || 'Pending';
+      const sc = st === 'Approved' || st === 'Approve' ? 'var(--success-custom)' : st === 'Rejected' || st === 'Reject' ? 'var(--danger-custom)' : 'var(--warning-custom)';
+      return `<tr>
+        <td><span class="badge bg-secondary">${i}</span></td>
+        <td class="fw-bold small">${r.projectTitle || '—'}</td>
+        <td class="small text-muted">${(r.description || '—').substring(0, 60)}</td>
+        <td class="small">${r.githubLink ? `<a href="${r.githubLink}" target="_blank" class="text-accent">GitHub</a>` : '—'}</td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+      </tr>`;
+    });
+  } catch (err) { tb.innerHTML = `<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`; }
+};
 
-// Patch Survey – real response: {success,message,data:[{surveyId,userId,surveyTitle,surveyDescription,isActive}]}
-const _origLoadSurveyList = loadSurveyList;
+loadEnquiries = async function() {
+  const tb = document.getElementById('enq-tbody'); if (!tb) return;
+  tb.innerHTML = `<tr><td colspan="4" class="text-center">${spinner()}</td></tr>`;
+  try {
+    const d = await api('Enquiry/get-enquiries');
+    const items = d.data || d || [];
+    const statusColors = { Open: 'var(--warning-custom)', 'In Progress': 'var(--accent)', Resolved: 'var(--success-custom)', Closed: 'var(--text-muted-custom)' };
+    makeTablePremium('enq-tbody', items, (r, i) => {
+      const st = r.statusName || r.status || 'Open';
+      const sc = statusColors[st] || 'var(--warning-custom)';
+      return `<tr>
+        <td><span class="badge bg-secondary">#${1000 + i}</span></td>
+        <td><strong class="small">${r.customerName || '—'}</strong><br><small class="text-muted">${r.customerEmail || ''}</small></td>
+        <td class="small">${(r.message || '—').substring(0, 60)}</td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+      </tr>`;
+    });
+  } catch (err) { tb.innerHTML = `<tr><td colspan="4" class="text-danger text-center py-3">${err.message}</td></tr>`; }
+};
+
+loadFees = async function() {
+  const tb = document.getElementById('fee-tbody'), sc = document.getElementById('fee-stats');
+  if (!tb) return;
+  tb.innerHTML = `<tr><td colspan="6" class="text-center">${spinner()}</td></tr>`;
+  try {
+    const [listRes, statsRes] = await Promise.allSettled([api('FeesTracking/getAllEnrollments'), api('FeesTracking/GetDashboardStats')]);
+    const items = (listRes.status === 'fulfilled' ? listRes.value.data || listRes.value : []) || [];
+    if (sc && statsRes.status === 'fulfilled') {
+      const s = statsRes.value.data || statsRes.value || {};
+      sc.innerHTML = `
+        <div class="col-sm-4"><div class="stat-card"><div class="stat-icon" style="background:#58a6ff22;color:var(--accent)"><i class="bi bi-people"></i></div><div class="stat-value">${s.totalEnrollments || items.length}</div><div class="stat-label">Total Enrollments</div></div></div>
+        <div class="col-sm-4"><div class="stat-card"><div class="stat-icon" style="background:#3fb95022;color:var(--success-custom)"><i class="bi bi-check-circle"></i></div><div class="stat-value">₹${Number(s.totalReceived || 0).toLocaleString()}</div><div class="stat-label">Total Received</div></div></div>
+        <div class="col-sm-4"><div class="stat-card"><div class="stat-icon" style="background:#d2992222;color:var(--warning-custom)"><i class="bi bi-clock-history"></i></div><div class="stat-value">₹${Number(s.totalPending || 0).toLocaleString()}</div><div class="stat-label">Pending</div></div></div>`;
+    }
+    makeTablePremium('fee-tbody', items, (r, i) => {
+      return `<tr>
+        <td><span class="badge bg-secondary">${i}</span></td>
+        <td><strong class="small">${r.studentName || '—'}</strong><br><small class="text-muted">${r.email || ''}</small></td>
+        <td><span class="badge bg-secondary">${r.batchName || r.batchId || '—'}</span></td>
+        <td class="small fw-bold">₹${Number(r.totalAmount || 0).toLocaleString()}</td>
+        <td class="small" style="color:var(--success-custom)">₹${Number(r.amountReceived || 0).toLocaleString()}</td>
+        <td class="small" style="color:var(--warning-custom)">₹${Number(r.pendingAmount || 0).toLocaleString()}</td>
+      </tr>`;
+    });
+  } catch (err) { tb.innerHTML = `<tr><td colspan="6" class="text-danger text-center py-3">${err.message}</td></tr>`; }
+};
+
+loadLeaves = async function() {
+  const tb = document.getElementById('leave-tbody'), bc = document.getElementById('leave-balance');
+  if (!tb) return;
+  tb.innerHTML = `<tr><td colspan="6" class="text-center">${spinner()}</td></tr>`;
+  try {
+    const [balRes, empRes] = await Promise.allSettled([api('LeaveTracker/GetAllBalances'), api('LeaveTracker/getAllEmployee')]);
+    if (bc && balRes.status === 'fulfilled') {
+      const bals = balRes.value.data || balRes.value || [];
+      bc.innerHTML = bals.slice(0, 3).map(b => `
+        <div class="col-sm-4"><div class="stat-card">
+          <div class="stat-icon" style="background:var(--accent-glow);color:var(--accent)"><i class="bi bi-calendar-check"></i></div>
+          <div class="stat-value">${b.balance || b.availableBalance || 0}</div>
+          <div class="stat-label">${b.leaveTypeName || b.leaveType || 'Leave'} Available</div>
+        </div></div>`).join('') || '';
+    }
+    const d = await api('LeaveTracker/GetLeaveRequestsbyEmpId?empId=1').catch(() => api('LeaveTracker/getAllEmployee'));
+    const items = d.data || d || [];
+    makeTablePremium('leave-tbody', items, (r, i) => {
+      const st = r.status || r.leaveStatus || 'Pending';
+      const sc = st === 'Approved' ? 'var(--success-custom)' : st === 'Rejected' ? 'var(--danger-custom)' : 'var(--warning-custom)';
+      return `<tr>
+        <td><span class="badge bg-secondary">${i}</span></td>
+        <td class="small fw-bold">${r.employeeName || r.name || '—'}</td>
+        <td><span class="badge" style="background:var(--accent-glow);color:var(--accent)">${r.leaveTypeName || r.leaveType || '—'}</span></td>
+        <td class="small">${r.fromDate || r.from_date || '—'}</td>
+        <td class="small">${r.toDate || r.to_date || '—'}</td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+      </tr>`;
+    });
+  } catch (err) { tb.innerHTML = `<tr><td colspan="6" class="text-danger text-center py-3">${err.message}</td></tr>`; }
+};
+
+loadCompetition = async function() {
+  const tb = document.getElementById('pc-tbody'); if (!tb) return;
+  tb.innerHTML = `<tr><td colspan="5" class="text-center">${spinner()}</td></tr>`;
+  try {
+    const d = await api('ProjectCompetition/project');
+    const items = d.data || d || [];
+    const medals = ['🥇', '🥈', '🥉'];
+    makeTablePremium('pc-tbody', items, (r, i) => {
+      const st = r.status || 'Pending';
+      const sc = st === 'Approved' ? 'var(--success-custom)' : st === 'Rejected' ? 'var(--danger-custom)' : 'var(--warning-custom)';
+      return `<tr>
+        <td class="text-center">${r.rank ? `<span class="badge bg-secondary">${r.rank}</span>` : i <= 3 ? medals[i - 1] : `<span class="badge bg-secondary">${i}</span>`}</td>
+        <td class="fw-bold small">${r.projectTitle || '—'}</td>
+        <td class="small text-muted">${(r.description || '—').substring(0, 50)}</td>
+        <td class="small">${r.githubLink ? `<a href="${r.githubLink}" target="_blank" style="color:var(--accent)">GitHub</a>` : '—'}</td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+      </tr>`;
+    });
+  } catch (err) { tb.innerHTML = `<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`; }
+};
+
+loadUsers = async function() {
+  const tb = document.getElementById('ua-tbody'); if (!tb) return;
+  tb.innerHTML = `<tr><td colspan="5" class="text-center">${spinner()}</td></tr>`;
+  try {
+    const d = await api('UserApp/GetAllUsers');
+    const users = d.data || d || [];
+    makeTablePremium('ua-tbody', users, (u, i) => {
+      const name = `${u.firstName || u.first_name || ''}  ${u.lastName || u.last_name || ''}`.trim() || u.userName || 'User';
+      const st = u.isActive === false ? 'Inactive' : 'Active';
+      const sc = st === 'Active' ? 'var(--success-custom)' : 'var(--text-muted-custom)';
+      return `<tr>
+        <td><div style="width:30px;height:30px;border-radius:50%;background:var(--accent-glow);display:flex;align-items:center;justify-content:center;color:var(--accent);font-weight:700;font-size:.7rem">${name.charAt(0).toUpperCase()}</div></td>
+        <td><strong class="small">${name}</strong><br><small class="text-muted">${u.email || ''}</small></td>
+        <td class="small text-muted">@${u.userName || u.username || '—'}</td>
+        <td class="small text-muted">${u.phone || u.contactNo || '—'}</td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+      </tr>`;
+    });
+  } catch (err) { tb.innerHTML = `<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`; }
+};
+
 loadSurveyList = async function() {
   const a = document.getElementById('survey-area'); if (!a) return;
   a.innerHTML = spinner();
@@ -1397,8 +1872,6 @@ loadSurveyList = async function() {
   } catch (err) { a.innerHTML = `<div class="alert alert-danger">${err.message}</div>`; }
 };
 
-// Patch SmartParking stats to use real field names
-const _origLoadParkingSlots = loadParkingSlots;
 loadParkingSlots = async function() {
   const g = document.getElementById('parking-grid'), s = document.getElementById('park-stats');
   if (!g) return; g.innerHTML = `<div class="col-12">${spinner()}</div>`;
@@ -1420,6 +1893,130 @@ loadParkingSlots = async function() {
       <div class="col-sm-4"><div class="stat-card"><div class="stat-icon" style="background:#58a6ff22;color:var(--accent)"><i class="bi bi-pie-chart"></i></div><div class="stat-value">${parkingSlots.length > 0 ? Math.round((occupied / parkingSlots.length) * 100) : 0}%</div><div class="stat-label">Occupancy</div></div></div>`;
     renderParkingGrid();
   } catch (err) { g.innerHTML = `<div class="col-12"><div class="alert alert-danger">${err.message}</div></div>`; }
+};
+
+// Form hooks for User Modes
+const _origRenderBankLoan = renderBankLoan;
+renderBankLoan = function(c) {
+  _origRenderBankLoan(c);
+  setupFormSubmit('loan-form', null, async () => {
+    await api('BankLoan/AddNewApplication','POST',{
+      fullName:document.getElementById('l-fname').value,
+      panCard:document.getElementById('l-pan').value,
+      email:document.getElementById('l-email').value,
+      phone:document.getElementById('l-phone').value,
+      dateOfBirth:document.getElementById('l-dob').value,
+      annualIncome:parseFloat(document.getElementById('l-income').value)||0,
+      employmentStatus:document.getElementById('l-emp').value,
+      creditScore:parseInt(document.getElementById('l-credit').value)||700,
+      loans:[{bankName:document.getElementById('l-bank').value,loanAmount:parseFloat(document.getElementById('l-amount').value)||0,emi:0}]
+    });
+  }, loadLoanList, 'loan-msg');
+};
+
+const _origRenderCollegeProject = renderCollegeProject;
+renderCollegeProject = function(c) {
+  _origRenderCollegeProject(c);
+  setupFormSubmit('cp-form', null, async () => {
+    await api('CollegeProject/SubmitProject','POST',{
+      projectTitle:document.getElementById('cp-title').value,
+      description:document.getElementById('cp-desc').value,
+      githubLink:document.getElementById('cp-github').value,
+      competitionId:parseInt(document.getElementById('cp-comp').value)||1,
+      userId:parseInt(document.getElementById('cp-uid').value)||1
+    });
+  }, loadCPList, 'cp-msg');
+};
+
+const _origRenderEnquiry = renderEnquiry;
+renderEnquiry = function(c) {
+  _origRenderEnquiry(c);
+  setupFormSubmit('enq-form', null, async () => {
+    await api('Enquiry/create-enquiry','POST',{
+      customerName:document.getElementById('enq-name').value,
+      customerEmail:document.getElementById('enq-email').value,
+      customerPhone:document.getElementById('enq-phone').value,
+      categoryId:parseInt(document.getElementById('enq-cat').value)||1,
+      message:document.getElementById('enq-msg-txt').value
+    });
+  }, loadEnquiries, 'enq-msg');
+};
+
+const _origRenderFeesTracking = renderFeesTracking;
+renderFeesTracking = function(c) {
+  _origRenderFeesTracking(c);
+  setupFormSubmit('fee-form', null, async () => {
+    const total=parseFloat(document.getElementById('f-total').value)||0;
+    const received=parseFloat(document.getElementById('f-received').value)||0;
+    await api('FeesTracking/addNewEnrollment','POST',{
+      studentName:document.getElementById('f-sname').value,
+      email:document.getElementById('f-email').value,
+      phone:document.getElementById('f-phone').value,
+      batchId:parseInt(document.getElementById('f-batch').value)||1,
+      totalAmount:total,amountReceived:received,pendingAmount:total-received
+    });
+  }, loadFees, 'fee-msg');
+};
+
+const _origRenderLeaveTracker = renderLeaveTracker;
+renderLeaveTracker = function(c) {
+  _origRenderLeaveTracker(c);
+  setupFormSubmit('leave-form', null, async () => {
+    await api('LeaveTracker/request','POST',{
+      employeeId:parseInt(document.getElementById('lv-eid').value)||1,
+      leaveTypeId:parseInt(document.getElementById('lv-type').value)||1,
+      fromDate:document.getElementById('lv-from').value,
+      toDate:document.getElementById('lv-to').value,
+      reason:document.getElementById('lv-reason').value
+    });
+  }, loadLeaves, 'leave-msg');
+};
+
+const _origRenderProjectCompetition = renderProjectCompetition;
+renderProjectCompetition = function(c) {
+  _origRenderProjectCompetition(c);
+  setupFormSubmit('pc-form', null, async () => {
+    await api('ProjectCompetition/project','POST',{
+      projectTitle:document.getElementById('pc-title').value,
+      description:document.getElementById('pc-desc').value,
+      githubLink:document.getElementById('pc-github').value,
+      competitionId:parseInt(document.getElementById('pc-cid').value)||1,
+      userId:parseInt(document.getElementById('pc-uid').value)||1
+    });
+  }, loadCompetition, 'pc-msg');
+};
+
+const _origRenderUserApp = renderUserApp;
+renderUserApp = function(c) {
+  _origRenderUserApp(c);
+  setupFormSubmit('ua-form', null, async () => {
+    const fn=document.getElementById('ua-fn').value, ln=document.getElementById('ua-ln').value;
+    await api('UserApp/CreateNewUser','POST',{
+      firstName:fn,lastName:ln,
+      email:document.getElementById('ua-email').value,
+      userName:document.getElementById('ua-uname').value,
+      password:document.getElementById('ua-pwd').value,
+      phone:document.getElementById('ua-phone').value
+    });
+    document.getElementById('ua-dname').textContent=`${fn} ${ln}`.trim();
+    document.getElementById('ua-demail').textContent=document.getElementById('ua-email').value;
+  }, loadUsers, 'ua-msg');
+};
+
+const _origRenderGoalTracker = renderGoalTracker;
+renderGoalTracker = function(c) {
+  _origRenderGoalTracker(c);
+  setupFormSubmit('goal-form', null, async () => {
+    await api('GoalTracker/createGoalWithMilestones','POST',{
+      userId:1,title:document.getElementById('g-title').value,
+      description:document.getElementById('g-desc').value,
+      category:document.getElementById('g-cat').value,
+      startDate:document.getElementById('g-start').value,
+      targetDate:document.getElementById('g-end').value,
+      frequency:document.getElementById('g-freq').value,
+      milestones:[]
+    });
+  }, loadGoals, 'goal-msg');
 };
 
 /* ══════════════════════════════════════════════════════════════
@@ -3097,6 +3694,687 @@ async function loadUsersAdmin(){
     }).join('');
   }catch(err){tb.innerHTML=`<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`;}
 }
+
+// Overrides & UX Wrappers for Admin Mode Table Loaders
+loadBankLoanAdminList = async function() {
+  const tb=document.getElementById('bla-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="7" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('BankLoan/GetAllApplications');
+    const items=d.data||d||[];
+    makeTablePremium('bla-tbody', items, (r, i) => {
+      const st=r.applicationStatus||'Pending';
+      const sc=st==='Approved' || st==='Approve'?'var(--success-custom)':st==='Rejected' || st==='Reject'?'var(--danger-custom)':'var(--warning-custom)';
+      const id=r.applicationId||r.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${r.fullName||'—'}</strong><br><small class="text-muted">${r.email||''}</small></td>
+        <td class="small text-muted">${r.customerPhone||'—'}<br>${r.panCard||'—'}</td>
+        <td class="small">₹${Number(r.annualIncome||0).toLocaleString()}</td>
+        <td class="small"><span class="badge bg-dark">${r.creditScore||0}</span></td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+        <td>
+          <div class="d-flex gap-1">
+            <button class="btn btn-success btn-xs" onclick="actionBankloan(${id},'Approve')"><i class="bi bi-check"></i></button>
+            <button class="btn btn-danger btn-xs" onclick="actionBankloan(${id},'Reject')"><i class="bi bi-x"></i></button>
+          </div>
+        </td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="7" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadBusSchedulesAdmin = async function() {
+  const tb=document.getElementById('bba-sched-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="6" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('BusBooking/GetBusSchedules');
+    const items=d.data||d||[];
+    makeTablePremium('bba-sched-tbody', items, (b, i) => {
+      const id=b.scheduleId||b.scheduleID||0;
+      return `<tr>
+        <td><strong>${b.busName||'—'}</strong><br><small class="text-muted">${b.busVehicleNo||''}</small></td>
+        <td class="small">${b.fromLocationName||b.fromLocation||'Origin'} → ${b.toLocationName||b.toLocation||'Dest'}</td>
+        <td class="small text-muted">${b.departureTime?new Date(b.departureTime).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'—'}<br>${b.arrivalTime?new Date(b.arrivalTime).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'—'}</td>
+        <td class="small fw-semibold">₹${b.price||0}</td>
+        <td class="small">${b.availableSeats??b.totalSeats??40}</td>
+        <td><button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteBusSchedule(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="6" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadBusVendorsAdmin = async function() {
+  const tb=document.getElementById('bba-vendor-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="4" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('BusBooking/GetBusVendors');
+    const items=d.data||d||[];
+    makeTablePremium('bba-vendor-tbody', items, (v, i) => {
+      const id=v.vendorId||v.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${v.vendorName||'—'}</strong></td>
+        <td class="small text-muted">${v.emailId||''}<br>${v.contactNo||''}</td>
+        <td><button class="btn btn-danger btn-sm py-1 px-2" onclick="deleteBusVendor(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="4" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadCollegeProjectAdminList = async function() {
+  const tb=document.getElementById('cpa-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="6" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('CollegeProject/getAllProjects');
+    const items=d.data||d||[];
+    makeTablePremium('cpa-tbody', items, (r, i) => {
+      const id=r.projectId||r.id||0;
+      const st=r.status||'Pending';
+      const sc=st==='Approved'?'var(--success-custom)':st==='Rejected'?'var(--danger-custom)':'var(--warning-custom)';
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${r.projectTitle||'—'}</strong><br><small class="text-muted">${(r.description||'').substring(0,40)}</small></td>
+        <td class="small">${r.githubLink?`<a href="${r.githubLink}" target="_blank" class="text-accent">GitHub</a>`:'—'}</td>
+        <td><span class="badge bg-secondary">Comp #${r.competitionId||1}</span></td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+        <td>
+          <div class="d-flex gap-1">
+            <button class="btn btn-success btn-xs" onclick="actionCP(${id},'Approved')"><i class="bi bi-check"></i></button>
+            <button class="btn btn-danger btn-xs" onclick="actionCP(${id},'Rejected')"><i class="bi bi-x"></i></button>
+          </div>
+        </td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="6" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadEcommerceOrders = async function() {
+  const tb=document.getElementById('eco-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="6" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('Ecommerce/GetAllOrders');
+    const items=d.data||d||[];
+    makeTablePremium('eco-tbody', items, (r, i) => {
+      const id=r.orderId||r.id||0;
+      const st=r.status||r.orderStatus||'Pending';
+      const sc=st==='Delivered'?'var(--success-custom)':st==='Cancelled'?'var(--danger-custom)':'var(--warning-custom)';
+      return `<tr>
+        <td><span class="badge bg-secondary">#${id}</span></td>
+        <td><strong>Cust #${r.customerId||1}</strong><br><small class="text-muted">${r.orderDate||'—'}</small></td>
+        <td class="small text-muted">${r.shippingAddress||'—'}</td>
+        <td class="small fw-bold">₹${r.totalAmount||0}</td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+        <td><button class="btn btn-danger btn-xs" onclick="cancelOrderAdmin(${id})"><i class="bi bi-x-circle"></i></button></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="6" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadEcommerceProductsAdmin = async function() {
+  const tb=document.getElementById('ecp-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="6" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('Ecommerce/GetAllProducts');
+    const items=d.data||d||[];
+    makeTablePremium('ecp-tbody', items, (r, i) => {
+      const id=r.productId||r.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td class="small"><strong>${r.productName||'—'}</strong><br><span class="text-muted">${r.categoryName||r.category||'—'}</span></td>
+        <td class="small text-muted">${(r.productDescription||'').substring(0,40)}</td>
+        <td class="small fw-bold">₹${r.price||0}</td>
+        <td class="small"><span class="badge bg-secondary">${r.productQuantity||r.stock||0} units</span></td>
+        <td><button class="btn btn-danger btn-xs" onclick="deleteProductAdmin(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="6" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadEmployeesAdmin = async function() {
+  const tb=document.getElementById('epa-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="7" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('EmployeeApp/GetAllEmployees');
+    const items=d.data||d||[];
+    makeTablePremium('epa-tbody', items, (r, i) => {
+      const id=r.employeeId||r.id||0;
+      const st=r.employeeType||'Active';
+      const sc=st==='Permanent'?'var(--success-custom)':st==='Contract'?'var(--accent)':'var(--warning-custom)';
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${r.fullName||r.name||'—'}</strong><br><small class="text-muted">${r.email||''}</small></td>
+        <td class="small">${r.departmentName||'—'}</td>
+        <td class="small text-muted">${r.designationName||'—'}</td>
+        <td class="small text-muted">${r.phone||'—'}</td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+        <td><button class="btn btn-danger btn-xs" onclick="deleteEmployeeAdmin(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="7" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadOnboardingEmployeesAdmin = async function() {
+  const tb=document.getElementById('eoa-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="6" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('EmployeeOnboarding/GetAllOnboardingEmployees');
+    const items=d.data||d||[];
+    makeTablePremium('eoa-tbody', items, (r, i) => {
+      const id=r.empOnboardingId||r.id||0;
+      const st=r.onboardingStatus||'Pending';
+      const sc=st==='Completed'?'var(--success-custom)':st==='Rejected'?'var(--danger-custom)':'var(--warning-custom)';
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${r.empName||'—'}</strong><br><small class="text-muted">${r.empEmail||''}</small></td>
+        <td class="small">${r.compName||r.companyName||'—'}</td>
+        <td class="small text-muted">${r.jobTitle||'—'}</td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+        <td><button class="btn btn-danger btn-xs" onclick="deleteOnboardingEmp(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="6" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadOnboardingMastersAdmin = async function() {
+  const tb=document.getElementById('eoma-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="4" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('EmployeeOnboarding/GetAllMasters');
+    const items=d.data||d||[];
+    makeTablePremium('eoma-tbody', items, (r, i) => {
+      const id=r.masterId||r.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${r.masterName||'—'}</strong></td>
+        <td class="small text-muted">${r.masterType||'—'}</td>
+        <td><button class="btn btn-danger btn-xs" onclick="deleteOnboardingMaster(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="4" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadOnboardingCompaniesAdmin = async function() {
+  const tb=document.getElementById('eoca-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="5" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('EmployeeOnboarding/GetAllCompanies');
+    const items=d.data||d||[];
+    makeTablePremium('eoca-tbody', items, (r, i) => {
+      const id=r.companyId||r.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${r.companyName||'—'}</strong></td>
+        <td class="small text-muted">${r.address||'—'}</td>
+        <td class="small text-muted">${r.phone||'—'}</td>
+        <td><button class="btn btn-danger btn-xs" onclick="deleteOnboardingComp(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadEnquiriesAdmin = async function() {
+  const tb=document.getElementById('eqa-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="6" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('Enquiry/get-enquiries');
+    const items=d.data||d||[];
+    const statusColors={Open:'var(--warning-custom)','In Progress':'var(--accent)',Resolved:'var(--success-custom)',Closed:'var(--text-muted-custom)'};
+    makeTablePremium('eqa-tbody', items, (r, i) => {
+      const id=r.enquiryId||r.id||0;
+      const st=r.statusName||r.status||'Open';
+      const sc=statusColors[st]||'var(--warning-custom)';
+      return `<tr>
+        <td><span class="badge bg-secondary">#${id}</span></td>
+        <td><strong>${r.customerName||'—'}</strong><br><small class="text-muted">${r.customerEmail||''}</small></td>
+        <td class="small">${r.customerPhone||'—'}</td>
+        <td class="small">${(r.message||'').substring(0,40)}</td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+        <td><button class="btn btn-success btn-xs" onclick="resolveEnquiryAdmin(${id})"><i class="bi bi-check-circle"></i></button></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="6" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadFeesAdmin = async function() {
+  const tb=document.getElementById('fta-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="7" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('FeesTracking/getAllEnrollments');
+    const items=d.data||d||[];
+    makeTablePremium('fta-tbody', items, (r, i) => {
+      const id=r.enrollmentId||r.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${r.studentName||'—'}</strong><br><small class="text-muted">${r.email||''}</small></td>
+        <td class="small">${r.batchName||r.batchId||'—'}</td>
+        <td class="small fw-bold">₹${Number(r.totalAmount||0).toLocaleString()}</td>
+        <td class="small text-success">₹${Number(r.amountReceived||0).toLocaleString()}</td>
+        <td class="small text-warning">₹${Number(r.pendingAmount||0).toLocaleString()}</td>
+        <td><button class="btn btn-danger btn-xs" onclick="deleteEnrollmentAdmin(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="7" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadBatchesAdmin = async function() {
+  const tb=document.getElementById('ftb-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="5" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('FeesTracking/GetAllBatches');
+    const items=d.data||d||[];
+    makeTablePremium('ftb-tbody', items, (r, i) => {
+      const id=r.batchId||r.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${r.batchName||'—'}</strong></td>
+        <td class="small text-muted">${r.startDate||'—'}</td>
+        <td class="small fw-bold">₹${r.batchPrice||0}</td>
+        <td><button class="btn btn-danger btn-xs" onclick="deleteBatchAdmin(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadGoalUsersAdmin = async function() {
+  const tb=document.getElementById('gta-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="6" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('GoalTracker/GetAllGoals');
+    const items=d.data||d||[];
+    makeTablePremium('gta-tbody', items, (r, i) => {
+      const id=r.goalId||r.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${r.title||'—'}</strong><br><small class="text-muted">${(r.description||'').substring(0,30)}</small></td>
+        <td class="small bg-secondary bg-opacity-25">${r.category||'—'}</td>
+        <td class="small text-muted">${r.startDate||'—'}➔${r.targetDate||'—'}</td>
+        <td class="small"><span class="badge bg-dark">${r.frequency||'Daily'}</span></td>
+        <td><button class="btn btn-danger btn-xs" onclick="deleteGoalAdmin(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="6" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadGoalRemindersAdmin = async function() {
+  const tb=document.getElementById('gtr-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="5" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('GoalTracker/GetAllReminders');
+    const items=d.data||d||[];
+    makeTablePremium('gtr-tbody', items, (r, i) => {
+      const id=r.reminderId||r.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td class="small">Goal #${r.goalId||1}</td>
+        <td class="small text-muted">${r.reminderDate||r.reminderTime||'—'}</td>
+        <td class="small text-muted">${r.message||'—'}</td>
+        <td><button class="btn btn-danger btn-xs" onclick="deleteGoalReminderAdmin(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadLeaveStaffAdmin = async function() {
+  const tb=document.getElementById('lta-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="5" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('LeaveTracker/GetAllLeaveRequests');
+    const items=d.data||d||[];
+    makeTablePremium('lta-tbody', items, (r, i) => {
+      const id=r.leaveRequestId||r.id||0;
+      const st=r.status||r.leaveStatus||'Pending';
+      const sc=st==='Approved'?'var(--success-custom)':st==='Rejected'?'var(--danger-custom)':'var(--warning-custom)';
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${r.employeeName||r.name||'Employee'}</strong></td>
+        <td><span class="badge bg-secondary bg-opacity-25 text-secondary">${r.leaveTypeName||'Leave'}</span></td>
+        <td class="small text-muted">${r.fromDate||'—'}➔${r.toDate||'—'}</td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadLeaveBalancesAdmin = async function() {
+  const tb=document.getElementById('ltb-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="5" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('LeaveTracker/GetAllBalances');
+    const items=d.data||d||[];
+    makeTablePremium('ltb-tbody', items, (r, i) => {
+      const id=r.leaveBalanceId||r.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td class="small">Emp #${r.employeeId||1}</td>
+        <td><span class="badge bg-dark">${r.leaveTypeName||r.leaveType||'Leave'}</span></td>
+        <td class="small fw-bold text-success">${r.availableBalance||r.balance||0} days</td>
+        <td><button class="btn btn-danger btn-xs" onclick="deleteLeaveBalance(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadCompetitionsAdmin = async function() {
+  const tb=document.getElementById('pca-comp-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="5" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('ProjectCompetition/GetAllCompetition');
+    const items=d.data||d||[];
+    makeTablePremium('pca-comp-tbody', items, (r, i) => {
+      const id=r.competitionId||r.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${r.competitionName||'—'}</strong></td>
+        <td class="small text-muted">${r.startDate||'—'}➔${r.endDate||'—'}</td>
+        <td class="small text-muted">${r.description||'—'}</td>
+        <td><button class="btn btn-danger btn-xs" onclick="deleteCompetitionAdmin(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadCompetitionSubmissionsAdmin = async function() {
+  const tb=document.getElementById('pca-sub-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="6" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('ProjectCompetition/project');
+    const items=d.data||d||[];
+    makeTablePremium('pca-sub-tbody', items, (r, i) => {
+      const id=r.projectId||r.id||0;
+      const st=r.status||'Pending';
+      const sc=st==='Approved'?'var(--success-custom)':st==='Rejected'?'var(--danger-custom)':'var(--warning-custom)';
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${r.projectTitle||'—'}</strong><br><small class="text-muted">${(r.description||'').substring(0,30)}</small></td>
+        <td class="small">${r.githubLink?`<a href="${r.githubLink}" target="_blank" class="text-accent">GitHub</a>`:'—'}</td>
+        <td class="small"><span class="badge bg-dark">${r.rank||'—'}</span></td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+        <td>
+          <div class="d-flex gap-1">
+            <button class="btn btn-success btn-xs" onclick="actionCompetitionSubmission(${id},'Approved')"><i class="bi bi-check"></i></button>
+            <button class="btn btn-danger btn-xs" onclick="actionCompetitionSubmission(${id},'Rejected')"><i class="bi bi-x"></i></button>
+          </div>
+        </td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="6" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadSmartClientsAdmin = async function() {
+  const tb=document.getElementById('spa-cli-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="5" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('SmartParking/GetAllClients');
+    const items=d.data||d||[];
+    makeTablePremium('spa-cli-tbody', items, (r, i) => {
+      const id=r.clientId||r.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${r.clientName||'—'}</strong></td>
+        <td class="small text-muted">${r.email||'—'}</td>
+        <td class="small text-muted">${r.phone||'—'}</td>
+        <td><button class="btn btn-danger btn-xs" onclick="deleteSmartClient(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadSmartSitesAdmin = async function() {
+  const tb=document.getElementById('spa-site-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="4" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('SmartParking/GetAllSites');
+    const items=d.data||d||[];
+    makeTablePremium('spa-site-tbody', items, (r, i) => {
+      const id=r.siteId||r.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${r.siteName||'—'}</strong></td>
+        <td class="small text-muted">${r.buildingName||'—'}</td>
+        <td><button class="btn btn-danger btn-xs" onclick="deleteSmartSite(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="4" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadSmartFloorsAdmin = async function() {
+  const tb=document.getElementById('spa-floor-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="4" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('SmartParking/GetAllFloors');
+    const items=d.data||d||[];
+    makeTablePremium('spa-floor-tbody', items, (r, i) => {
+      const id=r.floorId||r.id||0;
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${r.floorNo||'—'}</strong></td>
+        <td class="small text-muted">Site #${r.siteId||1}</td>
+        <td><button class="btn btn-danger btn-xs" onclick="deleteSmartFloor(${id})"><i class="bi bi-trash"></i></button></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="4" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadSurveysAdmin = async function() {
+  const tb=document.getElementById('sua-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="4" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('Survey/GetAllSurveys');
+    const items=d.data||d||[];
+    makeTablePremium('sua-tbody', items, (s, i) => {
+      const id=s.surveyId||s.id||0;
+      const st=s.isActive?'Active':'Closed';
+      const sc=s.isActive?'var(--success-custom)':'var(--text-muted-custom)';
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${s.surveyTitle||'—'}</strong><br><small class="text-muted">${(s.surveyDescription||'').substring(0,50)}</small></td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+        <td><button class="btn btn-outline-primary btn-sm py-1 px-2" onclick="loadSurveyResponsesAdmin(${id})"><i class="bi bi-bar-chart me-1"></i>Fetch Counts</button></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="4" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+loadUsersAdmin = async function() {
+  const tb=document.getElementById('uap-tbody'); if(!tb)return;
+  tb.innerHTML=`<tr><td colspan="5" class="text-center">${spinner()}</td></tr>`;
+  try{
+    const d=await api('UserApp/GetAllUsers');
+    const items=d.data||d||[];
+    makeTablePremium('uap-tbody', items, (u, i) => {
+      const id=u.customerId||u.id||0;
+      const name=`${u.firstName||''} ${u.lastName||''}`.trim()||'User';
+      const st=u.isActive===false?'Inactive':'Active';
+      const sc=st==='Active'?'var(--success-custom)':'var(--text-muted-custom)';
+      return `<tr>
+        <td><span class="badge bg-secondary">${id}</span></td>
+        <td><strong>${name}</strong><br><small class="text-muted">${u.email||''}</small></td>
+        <td class="small text-muted">@${u.userName||'—'}</td>
+        <td class="small text-muted">${u.phone||'—'}</td>
+        <td><span class="badge" style="background:${sc}22;color:${sc}">${st}</span></td>
+      </tr>`;
+    });
+  }catch(err){tb.innerHTML=`<tr><td colspan="5" class="text-danger text-center py-3">${err.message}</td></tr>`;}
+};
+
+// Admin Form hooks
+const _origRenderBusbookingAdmin = renderBusbookingAdmin;
+renderBusbookingAdmin = function(c) {
+  _origRenderBusbookingAdmin(c);
+  setupFormSubmit('bb-vendor-form', null, async () => {
+    await api('BusBooking/PostBusVendors','POST',{
+      vendorName:document.getElementById('bb-vn').value,
+      contactNo:document.getElementById('bb-vp').value,
+      emailId:document.getElementById('bb-ve').value
+    });
+  }, loadBusVendorsAdmin, 'bba-msg');
+  setupFormSubmit('bb-sched-form', null, async () => {
+    await api('BusBooking/PostBusSchedule','POST',{
+      busName:document.getElementById('bb-sname').value,
+      busVehicleNo:document.getElementById('bb-sno').value,
+      fromLocation:document.getElementById('bb-sfrom').value,
+      toLocation:document.getElementById('bb-sto').value,
+      departureTime:new Date(document.getElementById('bb-sdep').value).toISOString(),
+      arrivalTime:new Date(document.getElementById('bb-sarr').value).toISOString(),
+      scheduleDate:new Date(document.getElementById('bb-sdep').value).toISOString(),
+      price:parseFloat(document.getElementById('bb-sprc').value)||0,
+      totalSeats:parseInt(document.getElementById('bb-sseat').value)||40,
+      availableSeats:parseInt(document.getElementById('bb-sseat').value)||40,
+      vendorId:parseInt(document.getElementById('bb-svid').value)||1
+    });
+  }, loadBusSchedulesAdmin, 'bba-msg');
+};
+
+const _origRenderEcommerceAdmin = renderEcommerceAdmin;
+renderEcommerceAdmin = function(c) {
+  _origRenderEcommerceAdmin(c);
+  setupFormSubmit('ec-prod-form', null, async () => {
+    await api('Ecommerce/CreateProduct','POST',{
+      productName:document.getElementById('ec-pname').value,
+      categoryName:document.getElementById('ec-pcat').value,
+      productDescription:document.getElementById('ec-pdesc').value,
+      price:parseFloat(document.getElementById('ec-pprice').value)||0,
+      productQuantity:parseInt(document.getElementById('ec-pqty').value)||0
+    });
+  }, loadEcommerceProductsAdmin, 'ecp-msg');
+};
+
+const _origRenderEmployeeappAdmin = renderEmployeeappAdmin;
+renderEmployeeappAdmin = function(c) {
+  _origRenderEmployeeappAdmin(c);
+  setupFormSubmit('epa-form', null, async () => {
+    await api('EmployeeApp/AddNewEmployee','POST',{
+      fullName:document.getElementById('epa-name').value,
+      email:document.getElementById('epa-email').value,
+      phone:document.getElementById('epa-phone').value,
+      gender:document.getElementById('epa-gender').value,
+      departmentName:document.getElementById('epa-dept').value,
+      designationName:document.getElementById('epa-desg').value,
+      employeeType:document.getElementById('epa-type').value
+    });
+  }, loadEmployeesAdmin, 'epa-msg');
+};
+
+const _origRenderEmployeeonboardingAdmin = renderEmployeeonboardingAdmin;
+renderEmployeeonboardingAdmin = function(c) {
+  _origRenderEmployeeonboardingAdmin(c);
+  setupFormSubmit('eoa-form', null, async () => {
+    await api('EmployeeOnboarding/OnboardEmployee','POST',{
+      empName:document.getElementById('eoa-name').value,
+      empEmail:document.getElementById('eoa-email').value,
+      compName:document.getElementById('eoa-comp').value,
+      jobTitle:document.getElementById('eoa-title').value,
+      onboardingStatus:'Pending'
+    });
+  }, loadOnboardingEmployeesAdmin, 'eoa-msg');
+  setupFormSubmit('eom-form', null, async () => {
+    await api('EmployeeOnboarding/AddMaster','POST',{
+      masterName:document.getElementById('eom-name').value,
+      masterType:document.getElementById('eom-type').value
+    });
+  }, loadOnboardingMastersAdmin, 'eom-msg');
+  setupFormSubmit('eoc-form', null, async () => {
+    await api('EmployeeOnboarding/AddCompany','POST',{
+      companyName:document.getElementById('eoc-name').value,
+      address:document.getElementById('eoc-addr').value,
+      phone:document.getElementById('eoc-phone').value
+    });
+  }, loadOnboardingCompaniesAdmin, 'eoc-msg');
+};
+
+const _origRenderFeestrackingAdmin = renderFeestrackingAdmin;
+renderFeestrackingAdmin = function(c) {
+  _origRenderFeestrackingAdmin(c);
+  setupFormSubmit('fta-form', null, async () => {
+    const total=parseFloat(document.getElementById('fta-total').value)||0;
+    const rec=parseFloat(document.getElementById('fta-rec').value)||0;
+    await api('FeesTracking/addNewEnrollment','POST',{
+      studentName:document.getElementById('fta-sname').value,
+      email:document.getElementById('fta-email').value,
+      phone:document.getElementById('fta-phone').value,
+      batchId:parseInt(document.getElementById('fta-batch').value)||1,
+      totalAmount:total,amountReceived:rec,pendingAmount:total-rec
+    });
+  }, loadFeesAdmin, 'fta-msg');
+  setupFormSubmit('ftb-form', null, async () => {
+    await api('FeesTracking/AddBatch','POST',{
+      batchName:document.getElementById('ftb-name').value,
+      startDate:document.getElementById('ftb-start').value,
+      batchPrice:parseFloat(document.getElementById('ftb-price').value)||0
+    });
+  }, loadBatchesAdmin, 'ftb-msg');
+};
+
+const _origRenderProjectcompetitionAdmin = renderProjectcompetitionAdmin;
+renderProjectcompetitionAdmin = function(c) {
+  _origRenderProjectcompetitionAdmin(c);
+  setupFormSubmit('pca-comp-form', null, async () => {
+    await api('ProjectCompetition/CreateCompetition','POST',{
+      competitionName:document.getElementById('pca-cname').value,
+      startDate:document.getElementById('pca-cstart').value,
+      endDate:document.getElementById('pca-cend').value,
+      description:document.getElementById('pca-cdesc').value
+    });
+  }, loadCompetitionsAdmin, 'pca-comp-msg');
+};
+
+const _origRenderSmartparkingAdmin = renderSmartparkingAdmin;
+renderSmartparkingAdmin = function(c) {
+  _origRenderSmartparkingAdmin(c);
+  setupFormSubmit('spa-cli-form', null, async () => {
+    await api('SmartParking/AddClient','POST',{
+      clientName:document.getElementById('spa-cname').value,
+      email:document.getElementById('spa-cemail').value,
+      phone:document.getElementById('spa-cphone').value
+    });
+  }, loadSmartClientsAdmin, 'spa-cli-msg');
+  setupFormSubmit('spa-site-form', null, async () => {
+    await api('SmartParking/AddSite','POST',{
+      siteName:document.getElementById('spa-sname').value,
+      buildingName:document.getElementById('spa-sbuild').value
+    });
+  }, loadSmartSitesAdmin, 'spa-site-msg');
+  setupFormSubmit('spa-floor-form', null, async () => {
+    await api('SmartParking/AddFloor','POST',{
+      floorNo:document.getElementById('spa-fno').value,
+      siteId:parseInt(document.getElementById('spa-fsid').value)||1
+    });
+  }, loadSmartFloorsAdmin, 'spa-floor-msg');
+};
+
+const _origRenderSurveyAdmin = renderSurveyAdmin;
+renderSurveyAdmin = function(c) {
+  _origRenderSurveyAdmin(c);
+  setupFormSubmit('su-add-form', null, async () => {
+    await api('Survey/CreateSurvey','POST',{
+      surveyTitle:document.getElementById('su-title').value,
+      surveyDescription:document.getElementById('su-desc').value,
+      isActive:true
+    });
+  }, loadSurveysAdmin, 'su-msg');
+  setupFormSubmit('su-q-form', null, async () => {
+    await api('Survey/AddQuestion','POST',{
+      surveyId:parseInt(document.getElementById('su-qsid').value)||1,
+      questionText:document.getElementById('su-qtext').value
+    });
+  }, null, 'suq-msg');
+  setupFormSubmit('su-o-form', null, async () => {
+    await api('Survey/AddOption','POST',{
+      questionId:parseInt(document.getElementById('su-oqid').value)||1,
+      optionText:document.getElementById('su-otext').value
+    });
+  }, null, 'sua-msg');
+};
+
+const _origRenderUserappAdmin = renderUserappAdmin;
+renderUserappAdmin = function(c) {
+  _origRenderUserappAdmin(c);
+  setupFormSubmit('ua-reset-form', null, async () => {
+    const cid=document.getElementById('ua-rcid').value;
+    await api(`UserApp/update-password/${cid}`,'PUT',{password:document.getElementById('ua-rpwd').value});
+  }, loadUsersAdmin, 'uap-msg');
+};
 
 // Hook up Admin mode listener
 document.addEventListener('DOMContentLoaded',()=>{
