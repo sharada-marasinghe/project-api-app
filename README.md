@@ -2,8 +2,6 @@
 
 A fully functional **Single Page Application (SPA)** dashboard integrating **14 sandbox REST APIs** from [FreeProjectAPI](https://freeprojectapi.com). Built with pure **HTML5**, **Bootstrap 5**, and **Vanilla JavaScript (ES6+)** — no frameworks, no build tools.
 
-<img width="1915" height="1074" alt="image" src="https://github.com/user-attachments/assets/a9dca1c9-229c-4f75-9cd5-0b348dec25bc" />
-
 ![JavaScript](https://img.shields.io/badge/JavaScript-ES6+-F7DF1E?style=flat&logo=javascript&logoColor=black)
 ![APIs](https://img.shields.io/badge/APIs-14%20Integrated-58a6ff?style=flat)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat)
